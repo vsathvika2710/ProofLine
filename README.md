@@ -34,7 +34,7 @@ Old, contradictory claims remain live across website product pages, sales brochu
 
 - **Frontend Live Deployment (Vercel):** `https://proofline-governance.vercel.app` *(or preview locally at `http://localhost:5173`)*
 - **Backend Live API (Render / Railway):** `https://proofline-backend.onrender.com` *(OpenAPI documentation available at `/docs`)*
-- **Source Code Repository:** Judge-accessible repository containing full git commit history across all 7 build phases.
+- **Source Code Repository:** [https://github.com/vsathvika2710/ProofLine](https://github.com/vsathvika2710/ProofLine) *(Contains complete git commit history across all 7 build phases)*
 
 ---
 
