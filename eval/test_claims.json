@@ -1,0 +1,242 @@
+[
+  {
+    "id": "TC-01",
+    "claim_text": "All NovaWear SmartWatch X models come with a 2-year warranty.",
+    "ground_truth_status": "supported",
+    "expected_type": "numeric",
+    "expected_fact": "warranty_period",
+    "notes": "Directly supported by Warranty Policy v3.0 Section 1"
+  },
+  {
+    "id": "TC-02",
+    "claim_text": "Battery life lasts up to 7 days on typical usage.",
+    "ground_truth_status": "supported",
+    "expected_type": "numeric",
+    "expected_fact": "battery_life_days",
+    "notes": "Directly supported by Technical Specification Sheet v1.4"
+  },
+  {
+    "id": "TC-03",
+    "claim_text": "Water resistance is certified to 50 meters depth (5 ATM).",
+    "ground_truth_status": "supported",
+    "expected_type": "numeric",
+    "expected_fact": "water_resistance_depth",
+    "notes": "Directly supported by Technical Specification Sheet v1.4"
+  },
+  {
+    "id": "TC-04",
+    "claim_text": "Available in Midnight Blue finish.",
+    "ground_truth_status": "supported",
+    "expected_type": "other",
+    "expected_fact": "color_options",
+    "notes": "Matches approved enclosure finishes"
+  },
+  {
+    "id": "TC-05",
+    "claim_text": "Available in Silver aluminum finish.",
+    "ground_truth_status": "supported",
+    "expected_type": "other",
+    "expected_fact": "color_options",
+    "notes": "Matches approved enclosure finishes"
+  },
+  {
+    "id": "TC-06",
+    "claim_text": "Standard retail price starts at $199 USD.",
+    "ground_truth_status": "supported",
+    "expected_type": "numeric",
+    "expected_fact": "retail_price",
+    "notes": "Matches Global Pricing Sheet v2.1"
+  },
+  {
+    "id": "TC-07",
+    "claim_text": "Warranty policy covers accidental drops and liquid immersion damage.",
+    "ground_truth_status": "contradicted",
+    "expected_type": "other",
+    "expected_fact": "warranty_period",
+    "notes": "Contradicted: Policy explicitly excludes cosmetic and unauthorized damage"
+  },
+  {
+    "id": "TC-08",
+    "claim_text": "Certified waterproof to 100 meters for deep scuba diving.",
+    "ground_truth_status": "contradicted",
+    "expected_type": "numeric",
+    "expected_fact": "water_resistance_depth",
+    "notes": "Contradicted: Spec is 50m (5 ATM) only"
+  },
+  {
+    "id": "TC-09",
+    "claim_text": "The battery provides 14 days of active usage per charge.",
+    "ground_truth_status": "contradicted",
+    "expected_type": "numeric",
+    "expected_fact": "battery_life_days",
+    "notes": "Contradicted: Spec is 7 days, not 14"
+  },
+  {
+    "id": "TC-10",
+    "claim_text": "Retail launch price is discounted to $99 worldwide.",
+    "ground_truth_status": "contradicted",
+    "expected_type": "numeric",
+    "expected_fact": "retail_price",
+    "notes": "Contradicted: Commercial guidelines specify MSRP $199, floor $179"
+  },
+  {
+    "id": "TC-11",
+    "claim_text": "Rated for 200m extreme maritime pressure resistance.",
+    "ground_truth_status": "contradicted",
+    "expected_type": "numeric",
+    "expected_fact": "water_resistance_depth",
+    "notes": "Contradicted by technical spec"
+  },
+  {
+    "id": "TC-12",
+    "claim_text": "Rated for 30m splash resistance only.",
+    "ground_truth_status": "contradicted",
+    "expected_type": "numeric",
+    "expected_fact": "water_resistance_depth",
+    "notes": "Contradicted: Certified to 50m"
+  },
+  {
+    "id": "TC-13",
+    "claim_text": "Possesses the best battery in the entire world.",
+    "ground_truth_status": "unsupported",
+    "expected_type": "promotional",
+    "expected_fact": null,
+    "notes": "Unsubstantiated promotional superlative"
+  },
+  {
+    "id": "TC-14",
+    "claim_text": "Recommended by 9 out of 10 cardiologists worldwide.",
+    "ground_truth_status": "unsupported",
+    "expected_type": "promotional",
+    "expected_fact": null,
+    "notes": "No clinical trial evidence in Evidence Vault"
+  },
+  {
+    "id": "TC-15",
+    "claim_text": "Guaranteed to prevent acute heart attacks.",
+    "ground_truth_status": "unsupported",
+    "expected_type": "promotional",
+    "expected_fact": null,
+    "notes": "Unapproved medical diagnosis claim"
+  },
+  {
+    "id": "TC-16",
+    "claim_text": "The fastest charging smartwatch ever constructed.",
+    "ground_truth_status": "unsupported",
+    "expected_type": "comparative",
+    "expected_fact": null,
+    "notes": "Comparative claim without third-party test data"
+  },
+  {
+    "id": "TC-17",
+    "claim_text": "Voted #1 smartwatch of the decade by tech reviewers.",
+    "ground_truth_status": "unsupported",
+    "expected_type": "promotional",
+    "expected_fact": null,
+    "notes": "Superlative award claim with zero vault citations"
+  },
+  {
+    "id": "TC-18",
+    "claim_text": "100% unbreakable sapphire glass display.",
+    "ground_truth_status": "unsupported",
+    "expected_type": "promotional",
+    "expected_fact": null,
+    "notes": "Absolute durability claim unsupported by spec"
+  },
+  {
+    "id": "TC-19",
+    "claim_text": "Backed by our legacy 3-year extended warranty program.",
+    "ground_truth_status": "outdated",
+    "expected_type": "numeric",
+    "expected_fact": "warranty_period",
+    "notes": "Outdated: Legacy promotion discontinued in v3.0 policy"
+  },
+  {
+    "id": "TC-20",
+    "claim_text": "Early bird promotional price is $149 from Q4 2025.",
+    "ground_truth_status": "outdated",
+    "expected_type": "numeric",
+    "expected_fact": "retail_price",
+    "notes": "Outdated promotional pricing window expired"
+  },
+  {
+    "id": "TC-21",
+    "claim_text": "Comes with standard 1-year limited coverage.",
+    "ground_truth_status": "outdated",
+    "expected_type": "numeric",
+    "expected_fact": "warranty_period",
+    "notes": "Outdated: v2.0 policy was 1-year before being updated to 2-year"
+  },
+  {
+    "id": "TC-22",
+    "claim_text": "Ships with preliminary Beta OS build 0.9.",
+    "ground_truth_status": "outdated",
+    "expected_type": "other",
+    "expected_fact": null,
+    "notes": "Outdated software version statement"
+  },
+  {
+    "id": "TC-23",
+    "claim_text": "Pre-order includes complimentary leather strap bundle from 2024 launch.",
+    "ground_truth_status": "outdated",
+    "expected_type": "date",
+    "expected_fact": null,
+    "notes": "Expired historical campaign offer"
+  },
+  {
+    "id": "TC-24",
+    "claim_text": "Requires pairing with NovaWear Companion App v1.0.",
+    "ground_truth_status": "outdated",
+    "expected_type": "other",
+    "expected_fact": null,
+    "notes": "Superseded software dependency"
+  },
+  {
+    "id": "TC-25",
+    "claim_text": "Water resistant under normal recreational water sports and showers.",
+    "ground_truth_status": "needs_human_review",
+    "expected_type": "other",
+    "expected_fact": "water_resistance_depth",
+    "notes": "Ambiguous: safe for swimming but hot showers violate gasket temp guidelines"
+  },
+  {
+    "id": "TC-26",
+    "claim_text": "Battery life extends significantly when using low power mode.",
+    "ground_truth_status": "needs_human_review",
+    "expected_type": "comparative",
+    "expected_fact": "battery_life_days",
+    "notes": "Ambiguous: Qualitatively true but lacks exact numerical 48h standby definition"
+  },
+  {
+    "id": "TC-27",
+    "claim_text": "Hypoallergenic aerospace aluminum suitable for sensitive skin types.",
+    "ground_truth_status": "needs_human_review",
+    "expected_type": "other",
+    "expected_fact": "color_options",
+    "notes": "Ambiguous: Material is aerospace aluminum but dermatologist certification is pending"
+  },
+  {
+    "id": "TC-28",
+    "claim_text": "Express replacement turnaround within 48 business hours.",
+    "ground_truth_status": "needs_human_review",
+    "expected_type": "date",
+    "expected_fact": "warranty_period",
+    "notes": "Ambiguous: Mentioned in regional appendix but subject to local logistics availability"
+  },
+  {
+    "id": "TC-29",
+    "claim_text": "Compatible with standard third-party 22mm watch straps.",
+    "ground_truth_status": "needs_human_review",
+    "expected_type": "numeric",
+    "expected_fact": null,
+    "notes": "Ambiguous: Mechanism fits 22mm but custom pins are recommended"
+  },
+  {
+    "id": "TC-30",
+    "claim_text": "Complies with EU circular economy packaging directives.",
+    "ground_truth_status": "needs_human_review",
+    "expected_type": "other",
+    "expected_fact": null,
+    "notes": "Ambiguous regulatory certification requiring compliance signoff"
+  }
+]
