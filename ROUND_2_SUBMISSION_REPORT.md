@@ -12,6 +12,9 @@
 
 ## 1. Executive Summary & Working Prototype Overview
 
+> 🌐 **Live Public Prototype URL:** [https://vsathvika2710.github.io/ProofLine/](https://vsathvika2710.github.io/ProofLine/)  
+> 📁 **GitHub Source Code Repository:** [https://github.com/vsathvika2710/ProofLine](https://github.com/vsathvika2710/ProofLine)
+
 In response to the Inkloom AI problem statement, **Proofline** is built as an intelligent, evidence-backed brand governance platform designed to eliminate brand inconsistencies, outdated claims, unsupported promotional statements, and tone violations before content reaches the public.
 
 While existing brand solutions (such as Adobe Brand Intelligence or Bynder) act as passive linters requiring manual document submissions, Proofline introduces **Change-Impact Intelligence**:

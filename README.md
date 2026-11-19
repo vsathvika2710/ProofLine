@@ -4,6 +4,10 @@
 > *Built for the We Code Coders Hackathon · Problem Statement by Inkloom AI*  
 > *Round 2 Submission: The Build (MVP Prototype)*
 
+> 🌐 **LIVE PUBLIC PROTOTYPE (NO DOWNLOAD REQUIRED):**  
+> 👉 **[https://vsathvika2710.github.io/ProofLine/](https://vsathvika2710.github.io/ProofLine/)**  
+> *Fully interactive in-browser prototype — test the signature Change-Impact Engine, 3-column dependency graph, and Review Centre immediately with zero installation.*
+
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
 [![Backend](https://img.shields.io/badge/Backend-FastAPI%20%7C%20Python%203.11+-009688.svg)]()
 [![Frontend](https://img.shields.io/badge/Frontend-React%2019%20%7C%20Vite%20%7C%20TailwindCSS-0ea5e9.svg)]()
