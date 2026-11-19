@@ -32,8 +32,11 @@ Old, contradictory claims remain live across website product pages, sales brochu
 
 ## 🚀 2. Live Demo Links & Deployment
 
-- **Frontend Live Deployment (Vercel):** `https://proofline-governance.vercel.app` *(or preview locally at `http://localhost:5173`)*
-- **Backend Live API (Render / Railway):** `https://proofline-backend.onrender.com` *(OpenAPI documentation available at `/docs`)*
+- **Live Demo (GitHub Pages):** [https://vsathvika2710.github.io/ProofLine/](https://vsathvika2710.github.io/ProofLine/)
+- **1-Click Vercel Deployment:** [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fvsathvika2710%2FProofLine)  
+  *(Deploys the complete frontend in 30 seconds to your Vercel account)*
+- **1-Click Render Deployment (Backend & Frontend):** [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/vsathvika2710/ProofLine)  
+  *(Automatically provisions FastAPI Python API & static frontend using `render.yaml`)*
 - **Source Code Repository:** [https://github.com/vsathvika2710/ProofLine](https://github.com/vsathvika2710/ProofLine) *(Contains complete git commit history across all 7 build phases)*
 
 ---
