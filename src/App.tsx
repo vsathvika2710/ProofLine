@@ -434,6 +434,10 @@ export function OfficeDashboard({ publicDemo = false }: { publicDemo?: boolean }
         availableOfficeRoles={availableOfficeRoles}
         canManageOfficeData={!publicDemo && availableOfficeRoles.includes('admin')}
         error={officeAdminError}
+        onLogout={!publicDemo ? async () => {
+  await officeSignOut();
+  navigate('/office/login', { replace: true });
+} : undefined}
       />
     );
   }

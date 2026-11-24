@@ -12,6 +12,7 @@ import {
   Gauge,
   History,
   LayoutDashboard,
+  LogOut,
   Menu,
   PanelLeftClose,
   PanelLeftOpen,
@@ -52,6 +53,7 @@ interface AdminWorkspaceProps {
   onCreateTask: (task: Partial<ReviewTask>) => void;
   onUpdateTask: (task: ReviewTask, log: AuditLogEntry) => void;
   onSwitchWorkspace: (workspace: DemoWorkspace) => void;
+  onLogout?: () => void | Promise<void>;
 }
 
 const navigation: Array<{ id: AdminPage; label: string; icon: React.ReactNode }> = [
@@ -99,6 +101,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
   onCreateTask,
   onUpdateTask,
   onSwitchWorkspace,
+  onLogout,
 }) => {
   const [page, setPage] = useState<AdminPage>('overview');
   const [collapsed, setCollapsed] = useState(false);
@@ -321,7 +324,17 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
             </button>
             <ThemeSelector compact />
             <span className="hidden items-center gap-1.5 rounded-lg border border-[var(--pl-border)] px-2.5 py-2 text-xs font-medium sm:inline-flex"><Shield size={14} className="text-blue-600" /> Admin</span>
-            {(publicDemo || canSwitchWorkspace) && (
+            {!publicDemo && onLogout && (
+  <button
+    type="button"
+    onClick={() => void onLogout()}
+    className="inline-flex items-center gap-2 rounded-lg border border-red-300 px-3 py-2 text-xs font-medium text-red-600 hover:bg-red-50"
+  >
+    <LogOut size={15} />
+    <span>Sign Out</span>
+  </button>
+)}
+{(publicDemo || canSwitchWorkspace) && (
               <label className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--pl-border)] px-2.5 py-2 text-xs font-medium">
                 <span className="hidden sm:inline">Switch Workspace</span>
                 <span className="sm:hidden">Workspace</span>
