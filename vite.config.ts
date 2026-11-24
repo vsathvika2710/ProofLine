@@ -7,7 +7,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
 
   return {
-    base: './',
+   base: mode === 'production' ? '/ProofLine/' : '/',
     plugins: [react(), tailwindcss()],
     server: {
       proxy: {
