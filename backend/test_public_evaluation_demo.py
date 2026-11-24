@@ -1,7 +1,6 @@
 import unittest
 import asyncio
 import json
-from http.cookies import SimpleCookie
 from unittest.mock import patch
 from fastapi import HTTPException
 
@@ -44,7 +43,11 @@ class PublicEvaluationDemoSecurityTests(unittest.TestCase):
         asyncio.run(app(scope, receive, send))
         start = next(message for message in messages if message["type"] == "http.response.start")
         body = b"".join(message.get("body", b"") for message in messages if message["type"] == "http.response.body")
-        return start["status"], json.loads(body) if body else {}, dict(start.get("headers", []))
+        try:
+            payload = json.loads(body) if body else {}
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            payload = {}
+        return start["status"], payload, dict(start.get("headers", []))
 
     def test_feature_flag_controls_public_config_and_demo_api(self):
         with patch.object(settings, "enable_evaluation_access", False):
@@ -67,6 +70,20 @@ class PublicEvaluationDemoSecurityTests(unittest.TestCase):
             headers=[(b"origin", b"http://untrusted.example")],
         )
         self.assertNotIn(b"access-control-allow-origin", headers)
+
+    def test_cors_preflight_allows_opaque_demo_session_header(self):
+        status, _, headers = self.request(
+            "/api/evaluation/demo/session",
+            "OPTIONS",
+            headers=[
+                (b"origin", b"http://localhost:5173"),
+                (b"access-control-request-method", b"POST"),
+                (b"access-control-request-headers", b"content-type,x-proofline-evaluation-session"),
+            ],
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get(b"access-control-allow-origin"), b"http://localhost:5173")
+        self.assertIn(b"x-proofline-evaluation-session", headers.get(b"access-control-allow-headers", b""))
 
     def test_public_demo_has_no_anonymous_office_data_access(self):
         self.assertEqual(self.request("/api/dashboard/stats")[0], 401)
@@ -96,23 +113,20 @@ class PublicEvaluationDemoSecurityTests(unittest.TestCase):
     def test_demo_session_recovery_is_non_destructive_and_restart_is_explicit(self):
         evaluation_demo_workspace_store.clear()
 
-        def cookie_header(headers):
-            cookie = SimpleCookie()
-            cookie.load(headers[b"set-cookie"].decode("utf-8"))
-            return f"{cookie['proofline_evaluation_demo'].key}={cookie['proofline_evaluation_demo'].value}".encode("ascii")
+        def session_header(token):
+            return (b"x-proofline-evaluation-session", token.encode("ascii"))
 
         with patch.object(settings, "enable_evaluation_access", True):
-            status, _, created_headers = self.request("/api/evaluation/demo/session", "POST")
+            status, created, created_headers = self.request("/api/evaluation/demo/session", "POST")
             self.assertEqual(status, 200)
-            self.assertNotIn(b"max-age", created_headers[b"set-cookie"].lower())
-            original_cookie = cookie_header(created_headers)
-            original_token = original_cookie.decode("ascii").split("=", 1)[1]
+            self.assertNotIn(b"set-cookie", created_headers)
+            original_token = created["sessionToken"]
             original_session_id = evaluation_demo_workspace_store.get(original_token)["id"]
 
             status, _, _ = self.request(
                 "/api/evaluation/demo/session/recover",
                 "POST",
-                headers=[(b"cookie", original_cookie)],
+                headers=[session_header(original_token)],
             )
             self.assertEqual(status, 200)
             self.assertEqual(
@@ -125,7 +139,7 @@ class PublicEvaluationDemoSecurityTests(unittest.TestCase):
                 self.request(
                     "/api/evaluation/demo/session/recover",
                     "POST",
-                    headers=[(b"cookie", original_cookie)],
+                    headers=[session_header(original_token)],
                 )[0],
                 401,
             )
@@ -133,38 +147,34 @@ class PublicEvaluationDemoSecurityTests(unittest.TestCase):
                 self.request(
                     "/api/evaluation/demo/session",
                     "POST",
-                    headers=[(b"cookie", original_cookie)],
+                    headers=[session_header(original_token)],
                 )[0],
                 401,
             )
 
-            status, _, restarted_headers = self.request(
+            status, restarted, _ = self.request(
                 "/api/evaluation/demo/session/restart",
                 "POST",
-                headers=[(b"cookie", original_cookie)],
+                headers=[session_header(original_token)],
             )
             self.assertEqual(status, 200)
-            restarted_cookie = cookie_header(restarted_headers)
-            restarted_token = restarted_cookie.decode("ascii").split("=", 1)[1]
+            restarted_token = restarted["sessionToken"]
             self.assertNotEqual(restarted_token, original_token)
             self.assertIsNotNone(evaluation_demo_workspace_store.get(restarted_token))
 
     def test_creator_submissions_are_isolated_between_anonymous_sessions(self):
         evaluation_demo_workspace_store.clear()
         with patch.object(settings, "enable_evaluation_access", True):
-            status_a, _, headers_a = self.request("/api/evaluation/demo/session", "POST")
-            status_b, _, headers_b = self.request("/api/evaluation/demo/session", "POST")
+            status_a, session_a_body, _ = self.request("/api/evaluation/demo/session", "POST")
+            status_b, session_b_body, _ = self.request("/api/evaluation/demo/session", "POST")
             self.assertEqual(status_a, 200)
             self.assertEqual(status_b, 200)
 
-            def cookie_header(headers):
-                cookie = SimpleCookie()
-                cookie.load(headers[b"set-cookie"].decode("utf-8"))
-                return f"{cookie['proofline_evaluation_demo'].key}={cookie['proofline_evaluation_demo'].value}".encode("ascii")
-
-            session_a = cookie_header(headers_a)
-            session_b = cookie_header(headers_b)
-            session_id_a = evaluation_demo_workspace_store.get(session_a.decode("ascii").split("=", 1)[1])["id"]
+            token_a = session_a_body["sessionToken"]
+            token_b = session_b_body["sessionToken"]
+            session_a = (b"x-proofline-evaluation-session", token_a.encode("ascii"))
+            session_b = (b"x-proofline-evaluation-session", token_b.encode("ascii"))
+            session_id_a = evaluation_demo_workspace_store.get(token_a)["id"]
             draft = {
                 "title": "NovaWear demo launch copy",
                 "description": "A fictional evaluation draft",
@@ -203,7 +213,7 @@ class PublicEvaluationDemoSecurityTests(unittest.TestCase):
                 },
             }
             request_headers = [
-                (b"cookie", session_a),
+                session_a,
                 (b"content-type", b"application/json"),
             ]
             status, saved, _ = self.request(
@@ -226,7 +236,7 @@ class PublicEvaluationDemoSecurityTests(unittest.TestCase):
             status, submitted, _ = self.request(
                 f"/api/evaluation/demo/creator/content/{saved['id']}/submit",
                 "POST",
-                [(b"cookie", session_a)],
+                [session_a],
             )
             self.assertEqual(status, 200)
             self.assertEqual(submitted["task"]["status"], "pending")
@@ -234,28 +244,28 @@ class PublicEvaluationDemoSecurityTests(unittest.TestCase):
 
             status, queue_a, _ = self.request(
                 "/api/evaluation/demo/reviewer/queue",
-                headers=[(b"cookie", session_a)],
+                headers=[session_a],
             )
             self.assertEqual(status, 200)
             self.assertEqual([task["id"] for task in queue_a["tasks"]], [submitted["task"]["id"]])
 
             status, queue_b, _ = self.request(
                 "/api/evaluation/demo/reviewer/queue",
-                headers=[(b"cookie", session_b)],
+                headers=[session_b],
             )
             self.assertEqual(status, 200)
             self.assertEqual(queue_b["tasks"], [])
             status, _, _ = self.request(
                 f"/api/evaluation/demo/creator/content/{saved['id']}/submit",
                 "POST",
-                [(b"cookie", session_b)],
+                [session_b],
             )
             self.assertEqual(status, 404)
 
             status, _, _ = self.request(
                 f"/api/evaluation/demo/reviewer/queue/{submitted['task']['id']}/decision",
                 "POST",
-                [(b"cookie", session_a), (b"content-type", b"application/json")],
+                [session_a, (b"content-type", b"application/json")],
                 json.dumps({"decision": "approve", "note": "Attempt to approve the original claim."}).encode("utf-8"),
             )
             self.assertEqual(status, 409)
@@ -268,7 +278,7 @@ class PublicEvaluationDemoSecurityTests(unittest.TestCase):
             status, decision, _ = self.request(
                 f"/api/evaluation/demo/reviewer/queue/{submitted['task']['id']}/decision",
                 "POST",
-                [(b"cookie", session_a), (b"content-type", b"application/json")],
+                [session_a, (b"content-type", b"application/json")],
                 decision_body,
             )
             self.assertEqual(status, 200)
@@ -287,21 +297,21 @@ class PublicEvaluationDemoSecurityTests(unittest.TestCase):
             status, rejected_submission, _ = self.request(
                 f"/api/evaluation/demo/creator/content/{rejected_asset['id']}/submit",
                 "POST",
-                [(b"cookie", session_a)],
+                [session_a],
             )
             self.assertEqual(status, 200)
             rejection_url = f"/api/evaluation/demo/reviewer/queue/{rejected_submission['task']['id']}/decision"
             status, _, _ = self.request(
                 rejection_url,
                 "POST",
-                [(b"cookie", session_a), (b"content-type", b"application/json")],
+                [session_a, (b"content-type", b"application/json")],
                 json.dumps({"decision": "reject", "note": " "}).encode("utf-8"),
             )
             self.assertEqual(status, 422)
             status, rejection, _ = self.request(
                 rejection_url,
                 "POST",
-                [(b"cookie", session_a), (b"content-type", b"application/json")],
+                [session_a, (b"content-type", b"application/json")],
                 json.dumps({"decision": "reject", "note": "The warranty statement needs substantiation."}).encode("utf-8"),
             )
             self.assertEqual(status, 200)
@@ -311,7 +321,7 @@ class PublicEvaluationDemoSecurityTests(unittest.TestCase):
 
             status, workspace, _ = self.request(
                 "/api/evaluation/demo/creator/content",
-                headers=[(b"cookie", session_a)],
+                headers=[session_a],
             )
             self.assertEqual(status, 200)
             rejection_event = next(event for event in workspace["events"] if event["type"] == "review_rejected")

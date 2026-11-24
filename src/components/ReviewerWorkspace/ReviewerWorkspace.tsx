@@ -136,6 +136,7 @@ export const ReviewerWorkspace: React.FC<ReviewerWorkspaceProps> = ({
   const [events, setEvents] = useState<EvaluationDemoEvent[]>([]);
   const [factHistory, setFactHistory] = useState<OfficeFactVersion[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dataLoaded, setDataLoaded] = useState(false);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -150,6 +151,7 @@ export const ReviewerWorkspace: React.FC<ReviewerWorkspaceProps> = ({
 
   const refresh = useCallback(async () => {
     setLoading(true);
+    setDataLoaded(false);
     setError('');
     try {
       const data = await loadReviewerData(publicDemo);
@@ -157,6 +159,7 @@ export const ReviewerWorkspace: React.FC<ReviewerWorkspaceProps> = ({
       setEvents(data.events);
       setTasks(data.tasks);
       setFactHistory(data.factHistory);
+      setDataLoaded(true);
     } catch (cause) {
       setError(publicDemo
         ? cause instanceof EvaluationDemoRequestError ? cause.message : 'Could not load the Reviewer workspace. Try again.'
@@ -167,25 +170,8 @@ export const ReviewerWorkspace: React.FC<ReviewerWorkspaceProps> = ({
   }, [publicDemo]);
 
   useEffect(() => {
-    let active = true;
-    void loadReviewerData(publicDemo)
-      .then((data) => {
-        if (!active) return;
-        setAssets(data.assets);
-        setEvents(data.events);
-        setTasks(data.tasks);
-        setFactHistory(data.factHistory);
-      })
-      .catch((cause: unknown) => {
-        if (active) setError(publicDemo
-          ? cause instanceof EvaluationDemoRequestError ? cause.message : 'Could not load the Reviewer workspace. Try again.'
-          : cause instanceof Error ? cause.message : 'Could not load the Reviewer workspace.');
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => { active = false; };
-  }, [publicDemo]);
+    void refresh();
+  }, [refresh]);
 
   const restartDemo = async () => {
     if (restartingDemo) return;
@@ -527,7 +513,7 @@ export const ReviewerWorkspace: React.FC<ReviewerWorkspaceProps> = ({
           >
             {error}
           </WorkspaceNotice>}
-          {loading ? <div className={`${surface} p-8 text-center text-sm text-[var(--pl-muted)]`}><RefreshCw className="mx-auto mb-2 animate-spin" size={18} />{publicDemo && evaluationSessionStatus === 'restoring' ? 'Restoring Evaluation demo session…' : 'Loading reviewer workspace…'}</div> : content}
+          {loading || (publicDemo && evaluationSessionStatus === 'restoring') ? <div className={`${surface} p-8 text-center text-sm text-[var(--pl-muted)]`}><RefreshCw className="mx-auto mb-2 animate-spin" size={18} />{publicDemo && evaluationSessionStatus === 'restoring' ? 'Preparing your demo workspace...' : 'Loading reviewer workspace…'}</div> : publicDemo && evaluationSessionStatus === 'expired' ? <div className={`${surface} p-8 text-center text-sm text-[var(--pl-muted)]`}>Restart the demo session to continue.</div> : !dataLoaded ? <div className={`${surface} p-8 text-center text-sm text-[var(--pl-muted)]`}>{error || 'Workspace data is unavailable.'}<button type="button" onClick={() => void refresh()} className="ml-2 font-semibold text-blue-600 underline">Retry</button></div> : content}
         </main>
       </div>
       {selectedTask && <ReviewInspector

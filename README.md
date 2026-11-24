@@ -133,10 +133,17 @@ public demo routes. The homepage, selector and dashboard routes check `GET /api/
 the server remains authoritative, and evaluation API requests are rejected while the flag is off.
 
 The public demo has no login or role credentials. Evaluation Creator drafts, submissions, and Reviewer
-decisions use the dedicated `/api/evaluation/demo/*` API and an opaque HttpOnly, SameSite cookie.
-Workspace records are held in process memory, keyed by a server-generated session token, limited per
-session, and expire after one hour of inactivity. They are not stored in the shared Office database;
-they are lost on backend restart. The browser never supplies a tenant or session identifier.
+decisions use the dedicated `/api/evaluation/demo/*` API and a high-entropy opaque session token sent
+in the `X-Proofline-Evaluation-Session` request header; it does not depend on cross-site cookies. The
+browser stores the token locally, while the server stores only its SHA-256 hash. In production, the
+session and its demo data are persisted in the separate `evaluation_demo_sessions` Supabase table.
+Apply `backend/migrations/20261124_evaluation_demo_sessions.sql` in the Supabase SQL Editor before
+deploying this backend. Render's `RENDER` environment marker selects persistent storage; other
+production deployments should set `APP_ENV=production`. The backend must have its existing
+`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` settings configured. Local development uses
+process-memory storage. Sessions expire after one hour of inactivity and are isolated from Office
+data. If an expired session contains user changes, the user must explicitly restart the demo before a
+new session is created.
 
 The Evaluation Reviewer workspace displays the session's submitted claims and returned evidence,
 supports approve/reject/revision decisions, and records the reviewer rationale for rejection or

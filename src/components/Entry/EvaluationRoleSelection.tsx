@@ -2,6 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ClipboardCheck, FilePenLine, ShieldCheck } from 'lucide-react';
 import { checkEvaluationAccess } from '../../services/evaluationAccess';
+import {
+  EvaluationDemoSessionExpiredError,
+  restartEvaluationDemoSession,
+  restoreEvaluationDemoSession,
+} from '../../services/evaluationDemoWorkspace';
 type EvaluationRole = 'creator' | 'reviewer' | 'admin';
 
 const cards: Array<{ role: EvaluationRole; title: string; description: string; button: string; icon: React.ReactNode }> = [
@@ -14,10 +19,13 @@ export const EvaluationRoleSelection: React.FC = () => {
   const navigate = useNavigate();
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [error, setError] = useState('');
+  const [needsRestart, setNeedsRestart] = useState(false);
+  const [restarting, setRestarting] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const retry = () => {
     setEnabled(null);
     setError('');
+    setNeedsRestart(false);
     setAttempt((value) => value + 1);
   };
 
@@ -25,16 +33,23 @@ export const EvaluationRoleSelection: React.FC = () => {
     let active = true;
     const controller = new AbortController();
     void checkEvaluationAccess(controller.signal)
-      .then((isEnabled) => {
+      .then(async (isEnabled) => {
         if (!active) return;
         if (!isEnabled) {
           navigate('/', { replace: true });
           return;
         }
+        await restoreEvaluationDemoSession();
+        if (!active) return;
         setEnabled(true);
       })
       .catch((cause: unknown) => {
         if (!active) return;
+        if (cause instanceof EvaluationDemoSessionExpiredError) {
+          setNeedsRestart(true);
+          setError('');
+          return;
+        }
         setEnabled(false);
         setError(cause instanceof Error ? cause.message : 'Could not check demo availability. Retry the request.');
       });
@@ -47,6 +62,43 @@ export const EvaluationRoleSelection: React.FC = () => {
   const choose = (role: EvaluationRole) => {
     navigate(`/evaluation/dashboard/${role}`);
   };
+
+  const restartDemo = async () => {
+    if (restarting) return;
+    setRestarting(true);
+    setError('');
+    try {
+      await restartEvaluationDemoSession();
+      setNeedsRestart(false);
+      setEnabled(true);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'The demo could not be restarted. Try again.');
+    } finally {
+      setRestarting(false);
+    }
+  };
+
+  if (needsRestart) {
+    return (
+      <main className="entry-main flex min-h-screen items-center justify-center px-4">
+        <section className="portal-panel max-w-lg rounded-2xl p-6 text-center sm:p-8">
+          <h1 className="text-xl font-bold text-white">Restart the Evaluation demo?</h1>
+          <p className="mt-4 text-sm text-slate-400">
+            The previous session could not be recovered. Restarting creates a new session, and previous demo changes may be lost.
+          </p>
+          {error && <p role="alert" className="mt-3 text-sm text-rose-300">{error}</p>}
+          <div className="mt-5 flex flex-wrap justify-center gap-3">
+            <button type="button" disabled={restarting} onClick={() => void restartDemo()} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
+              {restarting ? 'Restarting…' : 'Restart Demo'}
+            </button>
+            <button type="button" onClick={() => navigate('/')} className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300">
+              Return home
+            </button>
+          </div>
+        </section>
+      </main>
+    );
+  }
 
   if (error) {
     return (
@@ -68,7 +120,7 @@ export const EvaluationRoleSelection: React.FC = () => {
   }
 
   if (enabled !== true) {
-    return <main className="entry-main flex min-h-screen items-center justify-center text-sm text-slate-400">Checking demo availability…</main>;
+    return <main className="entry-main flex min-h-screen items-center justify-center text-sm text-slate-400">Preparing your demo workspace...</main>;
   }
 
   return (

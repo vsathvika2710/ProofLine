@@ -144,6 +144,7 @@ export const CreatorWorkspace: React.FC<CreatorWorkspaceProps> = ({
   const [assets, setAssets] = useState<EvaluationDemoAsset[]>([]);
   const [events, setEvents] = useState<EvaluationDemoEvent[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dataLoaded, setDataLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [restartingDemo, setRestartingDemo] = useState(false);
   const [error, setError] = useState('');
@@ -174,6 +175,7 @@ export const CreatorWorkspace: React.FC<CreatorWorkspaceProps> = ({
 
   const reload = async () => {
     setLoading(true);
+    setDataLoaded(false);
     setError('');
     try {
       const workspace = publicDemo
@@ -181,6 +183,7 @@ export const CreatorWorkspace: React.FC<CreatorWorkspaceProps> = ({
         : await listOfficeCreatorWorkspace();
       setAssets(workspace.assets);
       setEvents(workspace.events);
+      setDataLoaded(true);
     } catch (cause) {
       setError(publicDemo
         ? cause instanceof EvaluationDemoRequestError ? cause.message : 'Could not load the Evaluation Creator workspace. Try again.'
@@ -614,7 +617,7 @@ export const CreatorWorkspace: React.FC<CreatorWorkspaceProps> = ({
           >
             {error}
           </WorkspaceNotice>}
-          {loading ? <div className={`${surface} p-8 text-center text-sm text-[var(--pl-muted)]`}><Clock3 className="mx-auto mb-2 animate-pulse" size={20} />{publicDemo && evaluationSessionStatus === 'restoring' ? 'Restoring Evaluation demo session…' : 'Loading workspace…'}</div> : content}
+          {loading || (publicDemo && evaluationSessionStatus === 'restoring') ? <div className={`${surface} p-8 text-center text-sm text-[var(--pl-muted)]`}><Clock3 className="mx-auto mb-2 animate-pulse" size={20} />{publicDemo && evaluationSessionStatus === 'restoring' ? 'Preparing your demo workspace...' : 'Loading workspace…'}</div> : publicDemo && evaluationSessionStatus === 'expired' ? <div className={`${surface} p-8 text-center text-sm text-[var(--pl-muted)]`}>Restart the demo session to continue.</div> : !dataLoaded ? <div className={`${surface} p-8 text-center text-sm text-[var(--pl-muted)]`}>{error || 'Workspace data is unavailable.'}<button type="button" onClick={() => void reload()} className="ml-2 font-semibold text-blue-600 underline">Retry</button></div> : content}
         </main>
       </div>
     </div>

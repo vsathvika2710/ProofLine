@@ -5,7 +5,6 @@ import logging
 from typing import List, Optional, Dict, Any, Literal
 from datetime import datetime, timezone
 from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException, status, BackgroundTasks, Request, Header
-from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -59,6 +58,10 @@ from .guest_verification import (
 )
 from .evaluation_demo_workspace import (
     DEMO_SESSION_TTL_SECONDS,
+    EvaluationDemoSessionConflict,
+    EvaluationDemoSessionHasExpiredWork,
+    EvaluationDemoSessionNotFound,
+    EvaluationDemoStoreUnavailable,
     evaluation_demo_workspace_store,
 )
 
@@ -154,7 +157,7 @@ def enforce_office_login_rate_limit(request: Request):
                     _office_login_attempts.pop(key, None)
 
 
-DEMO_SESSION_COOKIE = "proofline_evaluation_demo"
+DEMO_SESSION_HEADER = "x-proofline-evaluation-session"
 MAX_DEMO_ASSETS_PER_SESSION = 100
 MAX_DEMO_EVENTS_PER_SESSION = 500
 
@@ -179,10 +182,79 @@ class EvaluationDemoReviewDecision(BaseModel):
 def _require_evaluation_demo_session(request: Request) -> Dict[str, Any]:
     if not settings.enable_evaluation_access:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Evaluation Access is unavailable")
-    session = evaluation_demo_workspace_store.get(request.cookies.get(DEMO_SESSION_COOKIE))
+    try:
+        session = evaluation_demo_workspace_store.get(
+            request.headers.get(DEMO_SESSION_HEADER)
+        )
+    except EvaluationDemoStoreUnavailable as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Evaluation demo storage is unavailable.",
+        ) from exc
     if session is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Evaluation demo session expired. Reopen Evaluation Access.")
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            "Evaluation demo session is unavailable. Reopen Evaluation Access.",
+        )
     return session
+
+
+def _persist_evaluation_demo_session(session: Dict[str, Any]) -> None:
+    try:
+        evaluation_demo_workspace_store.save(session)
+    except EvaluationDemoSessionConflict as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "The demo workspace changed while this action was being saved. Refresh and try again.",
+        ) from exc
+    except EvaluationDemoSessionNotFound as exc:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            "Evaluation demo session is unavailable. Reopen Evaluation Access.",
+        ) from exc
+    except EvaluationDemoStoreUnavailable as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Evaluation demo storage is unavailable.",
+        ) from exc
+
+
+def _evaluation_demo_session_response(
+    request: Request,
+    *,
+    create_when_missing: bool,
+) -> Dict[str, Any]:
+    token = request.headers.get(DEMO_SESSION_HEADER)
+    try:
+        if not token:
+            if not create_when_missing:
+                raise EvaluationDemoSessionNotFound()
+            token, _ = evaluation_demo_workspace_store.create()
+            return {
+                "active": True,
+                "expiresIn": DEMO_SESSION_TTL_SECONDS,
+                "sessionToken": token,
+            }
+        token, _, rotated = evaluation_demo_workspace_store.recover(token)
+        response = {"active": True, "expiresIn": DEMO_SESSION_TTL_SECONDS}
+        if rotated:
+            response["sessionToken"] = token
+        return response
+    except EvaluationDemoSessionHasExpiredWork as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={"code": "demo_session_expired", "hasPreviousWork": True},
+        ) from exc
+    except EvaluationDemoSessionNotFound as exc:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "demo_session_unavailable"},
+        ) from exc
+    except EvaluationDemoStoreUnavailable as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Evaluation demo storage is unavailable.",
+        ) from exc
 
 
 def _demo_event(
@@ -229,39 +301,10 @@ def _record_demo_event(
     "/api/evaluation/demo/session",
     dependencies=[Depends(enforce_guest_rate_limit)],
 )
-def create_evaluation_demo_session(request: Request, response: Response):
+def create_evaluation_demo_session(request: Request):
     if not settings.enable_evaluation_access:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Evaluation Access is unavailable")
-
-    existing_token = request.cookies.get(DEMO_SESSION_COOKIE)
-    existing_session = evaluation_demo_workspace_store.get(existing_token)
-    if existing_token and existing_session is not None:
-        return {"active": True, "expiresIn": DEMO_SESSION_TTL_SECONDS}
-    if existing_token:
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED,
-            "Evaluation demo session expired. Restart the demo to continue.",
-        )
-
-    try:
-        token, _ = evaluation_demo_workspace_store.create()
-    except RuntimeError as exc:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
-
-    _set_evaluation_demo_cookie(response, token)
-    return {"active": True, "expiresIn": DEMO_SESSION_TTL_SECONDS}
-
-
-def _set_evaluation_demo_cookie(response: Response, token: str) -> None:
-    # The server-side idle timeout slides; a fixed cookie age would expire active sessions.
-    response.set_cookie(
-        key=DEMO_SESSION_COOKIE,
-        value=token,
-        httponly=True,
-        secure=settings.app_env.strip().lower() not in {"development", "dev", "local"},
-        samesite="strict",
-        path="/api/evaluation/demo",
-    )
+    return _evaluation_demo_session_response(request, create_when_missing=True)
 
 
 @app.post(
@@ -271,28 +314,28 @@ def _set_evaluation_demo_cookie(response: Response, token: str) -> None:
 def recover_evaluation_demo_session(request: Request):
     if not settings.enable_evaluation_access:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Evaluation Access is unavailable")
-    session = evaluation_demo_workspace_store.get(request.cookies.get(DEMO_SESSION_COOKIE))
-    if session is None:
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED,
-            "Evaluation demo session expired. Restart the demo to continue.",
-        )
-    return {"active": True, "expiresIn": DEMO_SESSION_TTL_SECONDS}
+    return _evaluation_demo_session_response(request, create_when_missing=False)
 
 
 @app.post(
     "/api/evaluation/demo/session/restart",
     dependencies=[Depends(enforce_guest_rate_limit)],
 )
-def restart_evaluation_demo_session(response: Response):
+def restart_evaluation_demo_session():
     if not settings.enable_evaluation_access:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Evaluation Access is unavailable")
     try:
         token, _ = evaluation_demo_workspace_store.create()
-    except RuntimeError as exc:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
-    _set_evaluation_demo_cookie(response, token)
-    return {"active": True, "expiresIn": DEMO_SESSION_TTL_SECONDS}
+    except EvaluationDemoStoreUnavailable as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Evaluation demo storage is unavailable.",
+        ) from exc
+    return {
+        "active": True,
+        "expiresIn": DEMO_SESSION_TTL_SECONDS,
+        "sessionToken": token,
+    }
 
 
 @app.get(
@@ -386,6 +429,7 @@ def save_evaluation_demo_creator_content(
             resource_id=asset_id,
             version=version,
         )
+        _persist_evaluation_demo_session(session)
         return asset
 
 
@@ -457,6 +501,7 @@ def submit_evaluation_demo_creator_content(
             resource_id=asset["id"],
             version=asset["version"],
         )
+        _persist_evaluation_demo_session(session)
         return {"asset": asset, "task": task}
 
 
@@ -573,6 +618,7 @@ def decide_evaluation_demo_review(
             resource_id=asset["id"],
             version=asset["version"],
         )
+        _persist_evaluation_demo_session(session)
         return {"asset": asset, "task": task}
 
 

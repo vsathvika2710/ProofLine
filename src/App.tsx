@@ -714,6 +714,10 @@ function EvaluationWorkspaceRoute() {
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
+    setAllowed(false);
+    setIsChecking(true);
+    setNeedsRestart(false);
+    setError('');
     void checkEvaluationAccess(controller.signal)
       .then(async (isEnabled) => {
         if (!active) return;
@@ -727,6 +731,8 @@ function EvaluationWorkspaceRoute() {
         setErrorTitle('Could not open demo workspace');
         await restoreEvaluationDemoSession();
         if (!active) return;
+        setError('');
+        setNeedsRestart(false);
         setAllowed(true);
       })
       .catch((cause: unknown) => {
@@ -805,7 +811,7 @@ function EvaluationWorkspaceRoute() {
     );
   }
   if (isChecking || !allowed) {
-    return <EntryLayout><main className="entry-main flex min-h-screen items-center justify-center text-sm text-slate-400">Restoring Evaluation demo session…</main></EntryLayout>;
+    return <EntryLayout><main className="entry-main flex min-h-screen items-center justify-center text-sm text-slate-400">Preparing your demo workspace...</main></EntryLayout>;
   }
   return <OfficeDashboard publicDemo />;
 }
