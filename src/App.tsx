@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { BrowserRouter, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import { Navbar } from './components/Navbar';
 import { Sidebar, TabType } from './components/Sidebar';
 import { ProductLanding } from './components/Showcase/ProductLanding';
@@ -9,36 +10,210 @@ import { ReviewQueue } from './components/ReviewCenter/ReviewQueue';
 import { MetricsOverview } from './components/GovernanceAnalytics/MetricsOverview';
 import { SubmissionDossierModal } from './components/Round2Dossier/SubmissionDossierModal';
 import { DemoGuideBanner } from './components/DemoWalkthrough/DemoGuideBanner';
+import { ModeLanding } from './components/Entry/ModeLanding';
+import { OfficeLogin } from './components/Entry/OfficeLogin';
+import { GuestScanner } from './components/Entry/GuestScanner';
+import { EntryLayout } from './components/Entry/EntryLayout';
+import { RoleSelection } from './components/Entry/RoleSelection';
+import { EvaluationRoleSelection } from './components/Entry/EvaluationRoleSelection';
+import { ThemeProvider } from './theme/ThemeProvider';
 import { SCENARIOS, INITIAL_REVIEW_TASKS, INITIAL_AUDIT_LOGS } from './data/mockData';
 import { Fact, UserRole, ReviewTask, AuditLogEntry, ChangeImpactResult } from './types';
+import { getOfficeSession, getWorkspace, officeSignOut, selectOfficeWorkspace } from './services/officeAuth';
+import { checkEvaluationAccess } from './services/evaluationAccess';
+import {
+  createEvaluationDemoAuditLogs,
+  createEvaluationDemoReviewTasks,
+  createEvaluationDemoScenario,
+} from './services/evaluationDemo';
+import { AdminWorkspace } from './components/AdminWorkspace/AdminWorkspace';
+import { CreatorWorkspace } from './components/CreatorWorkspace/CreatorWorkspace';
+import { ReviewerWorkspace } from './components/ReviewerWorkspace/ReviewerWorkspace';
+import {
+  decideEvaluationDemoReview,
+  initializeEvaluationDemoSession,
+  listEvaluationDemoReviewTasks,
+} from './services/evaluationDemoWorkspace';
+import {
+  changeOfficeFact,
+  createOfficeFact,
+  decideOfficeReview,
+  listOfficeAdminWorkspace,
+} from './services/officeWorkspace';
 
-export function App() {
+export function OfficeDashboard({ publicDemo = false }: { publicDemo?: boolean }) {
+  const { role: routeRole } = useParams<{ role: string }>();
+  const navigate = useNavigate();
+  const demoRole = routeRole === 'admin' || routeRole === 'creator' || routeRole === 'reviewer'
+    ? routeRole
+    : 'admin';
   const [scenarioId, setScenarioId] = useState<string>('smartwatch');
-  const [activeTab, setActiveTab] = useState<TabType>('landing');
-  const [activeRole, setActiveRole] = useState<UserRole>('legal_compliance');
+  const [selectedTab, setSelectedTab] = useState<TabType>('landing');
+  const initialOfficeRole: UserRole =
+    demoRole === 'creator' ? 'content_creator'
+      : demoRole === 'admin' ? 'brand_manager'
+        : 'legal_compliance';
+  const [selectedRole, setSelectedRole] = useState<UserRole>(initialOfficeRole);
+  const activeRole = publicDemo ? initialOfficeRole : selectedRole;
+  const [isJudgeDemo, setIsJudgeDemo] = useState(publicDemo);
+  const [availableOfficeRoles, setAvailableOfficeRoles] = useState<Array<'creator' | 'reviewer' | 'admin'>>(
+    publicDemo ? ['admin', 'creator', 'reviewer'] : [],
+  );
+  const [officeOrganizationId, setOfficeOrganizationId] = useState<string | null>(null);
+  const [officeAdminLoaded, setOfficeAdminLoaded] = useState(publicDemo || routeRole !== 'admin');
+  const [officeAdminError, setOfficeAdminError] = useState('');
   const [isDossierOpen, setIsDossierOpen] = useState<boolean>(false);
   const [isTourOpen, setIsTourOpen] = useState<boolean>(false);
   const [tourStep, setTourStep] = useState<number>(0);
 
+  useEffect(() => {
+    let active = true;
+    if (!publicDemo) {
+      void getOfficeSession().then(async (session) => {
+        if (!session) return;
+        try {
+          const workspace = await getWorkspace(session);
+          if (!active) return;
+          setIsJudgeDemo(false);
+          setAvailableOfficeRoles(workspace.accountType !== 'judge_demo' ? workspace.availableRoles : []);
+          setOfficeOrganizationId(workspace.organizationId);
+          if (routeRole === 'admin') {
+            setOfficeAdminLoaded(false);
+            setOfficeAdminError('');
+            try {
+              const data = await listOfficeAdminWorkspace();
+              if (!active) return;
+              setFacts(data.facts);
+              setDocuments(data.documents);
+              setAssets(data.assets);
+              setTasks(data.tasks);
+              setAuditLogs(data.auditLogs);
+            } catch (cause) {
+              if (active) setOfficeAdminError(cause instanceof Error ? cause.message : 'Could not load organization-scoped Admin data.');
+            } finally {
+              if (active) setOfficeAdminLoaded(true);
+            }
+          }
+        } catch {
+          if (active) navigate('/office/login', { replace: true });
+        }
+      });
+    }
+    return () => { active = false; };
+  }, [navigate, publicDemo, routeRole]);
+
   // Active scenario data
-  const currentScenario = SCENARIOS[scenarioId] || SCENARIOS.smartwatch;
+  const demoScenario = useMemo(
+    () => publicDemo ? createEvaluationDemoScenario() : null,
+    [publicDemo],
+  );
+  const currentScenario = publicDemo
+    ? demoScenario!
+    : SCENARIOS[scenarioId] || SCENARIOS.smartwatch;
   const [facts, setFacts] = useState<Fact[]>(currentScenario.facts);
   const [documents, setDocuments] = useState(currentScenario.documents);
   const [assets, setAssets] = useState(currentScenario.assets);
-  const [tasks, setTasks] = useState<ReviewTask[]>(INITIAL_REVIEW_TASKS);
-  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(INITIAL_AUDIT_LOGS);
+  const [tasks, setTasks] = useState<ReviewTask[]>(() => publicDemo
+    ? createEvaluationDemoReviewTasks()
+    : INITIAL_REVIEW_TASKS.map((task) => ({
+      ...task,
+      auditTrail: task.auditTrail.map((event) => ({ ...event })),
+    })),
+  );
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(() => publicDemo
+    ? createEvaluationDemoAuditLogs()
+    : INITIAL_AUDIT_LOGS.map((entry) => ({ ...entry })),
+  );
+  const [demoQueueError, setDemoQueueError] = useState('');
+  useEffect(() => {
+    if (publicDemo) setSelectedTab(demoRole === 'reviewer' ? 'review_center' : 'landing');
+  }, [demoRole, publicDemo]);
+
+  useEffect(() => {
+    if (!publicDemo || demoRole !== 'reviewer') return;
+    let active = true;
+    setDemoQueueError('');
+    void listEvaluationDemoReviewTasks()
+      .then(({ tasks: demoTasks }) => {
+        if (active) setTasks(demoTasks);
+      })
+      .catch((cause: unknown) => {
+        if (active) setDemoQueueError(cause instanceof Error ? cause.message : 'Could not load the session Reviewer Queue.');
+      });
+    return () => { active = false; };
+  }, [demoRole, publicDemo]);
+
+  const refreshOfficeAdmin = async () => {
+    const data = await listOfficeAdminWorkspace();
+    setFacts(data.facts);
+    setDocuments(data.documents);
+    setAssets(data.assets);
+    setTasks(data.tasks);
+    setAuditLogs(data.auditLogs);
+    return data;
+  };
+  const demoPermissions: Record<typeof demoRole, TabType[]> = {
+    admin: ['landing', 'impact', 'vault', 'reviewer', 'review_center', 'analytics', 'dossier'],
+    creator: ['landing', 'reviewer'],
+    reviewer: ['landing', 'vault', 'review_center'],
+  };
+  const activeTab = publicDemo && !demoPermissions[demoRole].includes(selectedTab)
+    ? 'landing'
+    : selectedTab;
+  const selectTab = (tab: TabType) => {
+    if (publicDemo) {
+      if (!demoPermissions[demoRole].includes(tab)) {
+        setSelectedTab(demoRole === 'creator' ? 'reviewer' : 'review_center');
+        return;
+      }
+    }
+    setSelectedTab(tab);
+  };
+
+  const handleSwitchWorkspace = async (workspace: 'admin' | 'creator' | 'reviewer') => {
+    if (publicDemo) {
+      navigate(`/evaluation/dashboard/${workspace}`);
+      return;
+    }
+    const session = await getOfficeSession();
+    if (!session) {
+      navigate('/office/login', { replace: true });
+      return;
+    }
+    await selectOfficeWorkspace(session, workspace);
+    navigate(`/office/dashboard/${workspace}`);
+  };
 
   // Switch scenario
   const handleSelectScenario = (id: string) => {
+    if (publicDemo) return;
     setScenarioId(id);
     const scen = SCENARIOS[id] || SCENARIOS.smartwatch;
     setFacts(scen.facts);
     setDocuments(scen.documents);
     setAssets(scen.assets);
+    // Keep scenario demo data isolated instead of carrying review/audit state across scenarios.
+    setTasks(INITIAL_REVIEW_TASKS);
+    setAuditLogs(INITIAL_AUDIT_LOGS);
   };
 
   // Fact updated via Change Impact Engine
   const handleFactUpdated = (updatedFact: Fact, impact: ChangeImpactResult) => {
+    if (!publicDemo) {
+      return (async () => {
+        setOfficeAdminError('');
+        try {
+          const committedImpact = await changeOfficeFact(updatedFact.id, updatedFact.currentValue);
+          await refreshOfficeAdmin();
+          return committedImpact;
+        } catch (cause) {
+          const message = cause instanceof Error ? cause.message : 'The organization fact could not be updated.';
+          setOfficeAdminError(message);
+          throw cause;
+        }
+      })();
+    }
+
     // 1. Update facts list
     setFacts((prev) => prev.map((f) => (f.id === updatedFact.id ? updatedFact : f)));
 
@@ -146,7 +321,27 @@ export function App() {
   };
 
   // Update task from Review Center (e.g. approve or reject)
-  const handleUpdateTask = (updatedTask: ReviewTask, log: AuditLogEntry) => {
+  const handleUpdateTask = async (updatedTask: ReviewTask, log: AuditLogEntry) => {
+    if (publicDemo && demoRole === 'reviewer') {
+      const decision = updatedTask.status === 'approved' ? 'approve' : 'request_revision';
+      const result = await decideEvaluationDemoReview(
+        updatedTask.id,
+        decision,
+        updatedTask.notes || log.details,
+        updatedTask.currentText,
+      );
+      setTasks((prev) => prev.map((task) => task.id === result.task.id ? result.task : task));
+      setAuditLogs((prev) => [log, ...prev]);
+      return;
+    }
+
+    if (!publicDemo) {
+      const decision = updatedTask.status === 'approved' ? 'approve' : 'request_revision';
+      await decideOfficeReview(updatedTask.id, decision, updatedTask.notes || log.details, 'admin');
+      await refreshOfficeAdmin();
+      return;
+    }
+
     setTasks((prev) => prev.map((t) => (t.id === updatedTask.id ? updatedTask : t)));
     setAuditLogs((prev) => [log, ...prev]);
 
@@ -170,10 +365,84 @@ export function App() {
   };
 
   const handleSelectFactForImpact = (_factId: string) => {
-    setActiveTab('impact');
+    selectTab('impact');
   };
 
   const pendingTasksCount = tasks.filter((t) => t.status === 'pending').length;
+
+  if (!publicDemo && routeRole === 'admin' && !officeAdminLoaded) {
+    return <EntryLayout><main className="entry-main flex min-h-screen items-center justify-center px-4 text-sm text-slate-400">Loading authorized organization workspace…</main></EntryLayout>;
+  }
+
+  if (routeRole === 'admin') {
+    return (
+      <AdminWorkspace
+        publicDemo={publicDemo}
+        organizationLabel={publicDemo
+          ? 'NovaWear Demo'
+          : officeOrganizationId
+            ? `Organization ID: ${officeOrganizationId}`
+            : 'Authorized organization'}
+        scenario={currentScenario}
+        facts={facts}
+        documents={documents}
+        assets={assets}
+        tasks={tasks}
+        auditLogs={auditLogs}
+        activeRole={activeRole}
+        onFactUpdated={handleFactUpdated}
+        onAddFact={(fact) => {
+          if (publicDemo) {
+            setFacts((prev) => [fact, ...prev]);
+            return;
+          }
+          setOfficeAdminError('');
+          void createOfficeFact(fact)
+            .then(() => refreshOfficeAdmin())
+            .catch((cause: unknown) => setOfficeAdminError(cause instanceof Error ? cause.message : 'The approved fact could not be saved.'));
+        }}
+        onCreateTask={handleCreateTask}
+        onUpdateTask={handleUpdateTask}
+        onSwitchWorkspace={(workspace) => void handleSwitchWorkspace(workspace)}
+        canSwitchWorkspace={!publicDemo && availableOfficeRoles.length > 1}
+        availableOfficeRoles={availableOfficeRoles}
+        canManageOfficeData={!publicDemo && availableOfficeRoles.includes('admin')}
+        error={officeAdminError}
+      />
+    );
+  }
+
+  if (routeRole === 'creator') {
+    return (
+      <CreatorWorkspace
+        publicDemo={publicDemo}
+        organizationLabel={publicDemo ? 'NovaWear Demo' : officeOrganizationId ? `Organization ID: ${officeOrganizationId}` : 'Authorized organization'}
+        canSwitchWorkspace={!publicDemo && availableOfficeRoles.length > 1}
+        availableOfficeRoles={availableOfficeRoles}
+        onSwitchWorkspace={publicDemo || availableOfficeRoles.length > 1 ? handleSwitchWorkspace : undefined}
+        onLogout={!publicDemo ? async () => {
+          await officeSignOut();
+          navigate('/office/login', { replace: true });
+        } : undefined}
+      />
+    );
+  }
+
+  if (routeRole === 'reviewer') {
+    return (
+      <ReviewerWorkspace
+        organizationLabel={publicDemo ? 'NovaWear Demo' : officeOrganizationId ? `Organization ID: ${officeOrganizationId}` : 'Authorized organization'}
+        publicDemo={publicDemo}
+        canSwitchWorkspace={!publicDemo && availableOfficeRoles.length > 1}
+        availableOfficeRoles={availableOfficeRoles}
+        onSwitchWorkspace={handleSwitchWorkspace}
+        onLogout={!publicDemo ? async () => {
+          await officeSignOut();
+          navigate('/office/login', { replace: true });
+        } : undefined}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#06080e] text-slate-100 flex flex-col font-sans selection:bg-cyan-500/30 selection:text-cyan-200">
@@ -182,14 +451,35 @@ export function App() {
         currentScenario={scenarioId}
         onSelectScenario={handleSelectScenario}
         activeRole={activeRole}
-        onSelectRole={setActiveRole}
+        onSelectRole={setSelectedRole}
+        isJudgeDemo={isJudgeDemo}
+        canSwitchWorkspace={!publicDemo && availableOfficeRoles.length > 1}
+        availableOfficeRoles={publicDemo ? ['admin', 'creator', 'reviewer'] : availableOfficeRoles}
+        publicDemo={publicDemo}
+        onSelectOfficeRole={async (officeRole) => {
+          if (publicDemo) {
+            navigate(`/evaluation/dashboard/${officeRole}`);
+            return;
+          }
+          const session = await getOfficeSession();
+          if (!session) {
+            navigate('/office/login', { replace: true });
+            return;
+          }
+          await selectOfficeWorkspace(session, officeRole);
+          navigate(`/office/dashboard/${officeRole}`);
+        }}
+        onLogout={!publicDemo ? async () => {
+          await officeSignOut();
+          navigate('/office/login', { replace: true });
+        } : undefined}
         activeTab={activeTab}
-        onSelectTab={setActiveTab}
+        onSelectTab={selectTab}
         onOpenDossier={() => setIsDossierOpen(true)}
         onStartTour={() => {
           setIsTourOpen(true);
           setTourStep(0);
-          setActiveTab('vault');
+          selectTab('vault');
         }}
       />
 
@@ -197,11 +487,11 @@ export function App() {
       {activeTab === 'landing' ? (
         <main className="flex-1 px-4 lg:px-8 py-8 max-w-7xl mx-auto w-full">
           <ProductLanding
-            onLaunchApp={(tab) => setActiveTab(tab)}
+            onLaunchApp={(tab) => selectTab(tab)}
             onStartTour={() => {
               setIsTourOpen(true);
               setTourStep(0);
-              setActiveTab('vault');
+              selectTab('vault');
             }}
             onOpenDossier={() => setIsDossierOpen(true)}
             onSelectScenario={handleSelectScenario}
@@ -211,9 +501,14 @@ export function App() {
         <div className="flex-1 flex flex-col md:flex-row min-h-0">
           <Sidebar
             activeTab={activeTab}
-            onSelectTab={setActiveTab}
+            onSelectTab={selectTab}
             pendingTasksCount={pendingTasksCount}
             factsCount={facts.length}
+            activeOfficeRole={
+              routeRole === 'creator' ? 'creator'
+                : routeRole === 'reviewer' ? 'reviewer'
+                  : 'admin'
+            }
           />
 
           <main className="flex-1 p-4 lg:p-8 overflow-y-auto max-w-7xl mx-auto w-full">
@@ -222,7 +517,7 @@ export function App() {
                 facts={facts}
                 assets={assets}
                 onFactUpdated={handleFactUpdated}
-                onNavigateToReviews={() => setActiveTab('review_center')}
+                onNavigateToReviews={() => selectTab('review_center')}
               />
             )}
 
@@ -240,17 +535,25 @@ export function App() {
                 scenario={currentScenario}
                 facts={facts}
                 onCreateReviewTask={handleCreateTask}
-                onNavigateToReviews={() => setActiveTab('review_center')}
+                onNavigateToReviews={() => selectTab('review_center')}
               />
             )}
 
             {activeTab === 'review_center' && (
-              <ReviewQueue
-                tasks={tasks}
-                auditLogs={auditLogs}
-                activeRole={activeRole}
-                onUpdateTask={handleUpdateTask}
-              />
+              <>
+                {demoQueueError && <div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-rose-300 bg-rose-50 px-3.5 py-3 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200"><span>{demoQueueError}</span><button type="button" onClick={() => {
+                  setDemoQueueError('');
+                  void listEvaluationDemoReviewTasks()
+                    .then(({ tasks: demoTasks }) => setTasks(demoTasks))
+                    .catch((cause: unknown) => setDemoQueueError(cause instanceof Error ? cause.message : 'Could not load the session Reviewer Queue.'));
+                }} className="font-semibold underline">Retry</button></div>}
+                <ReviewQueue
+                  tasks={tasks}
+                  auditLogs={auditLogs}
+                  activeRole={activeRole}
+                  onUpdateTask={handleUpdateTask}
+                />
+              </>
             )}
 
             {activeTab === 'analytics' && (
@@ -288,11 +591,153 @@ export function App() {
           onPrevStep={() => setTourStep((s) => Math.max(0, s - 1))}
           onJumpToStep={(idx) => setTourStep(idx)}
           onClose={() => setIsTourOpen(false)}
-          onSelectTab={setActiveTab}
+          onSelectTab={selectTab}
         />
       )}
     </div>
   );
 }
 
-export default App;
+function OfficeWorkspaceRoute() {
+  const { role } = useParams<{ role: string }>();
+  const navigate = useNavigate();
+  const [allowed, setAllowed] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    void getOfficeSession().then(async (session) => {
+      if (!session) {
+        if (active) navigate('/office/login', { replace: true });
+        return;
+      }
+      try {
+        const requested = role as 'creator' | 'reviewer' | 'admin';
+        if (!['creator', 'reviewer', 'admin'].includes(requested)) throw new Error('Unknown workspace.');
+        const workspace = await getWorkspace(session, requested);
+        if (workspace.accountType === 'judge_demo') {
+          throw new Error('Evaluation accounts must use Evaluation Access.');
+        }
+        if (!workspace.availableRoles.includes(requested)) throw new Error('This dashboard is not assigned to your account.');
+        if (workspace.availableRoles.length === 1 && workspace.assignedRole !== requested) {
+          throw new Error('This dashboard is not assigned to your account.');
+        }
+        if (active) setAllowed(true);
+      } catch (err) {
+        if (active) setError(err instanceof Error ? err.message : 'Office access was denied.');
+      }
+    });
+    return () => { active = false; };
+  }, [navigate, role]);
+
+  if (error) {
+    return (
+      <EntryLayout>
+        <main className="entry-main flex min-h-screen items-center justify-center px-4">
+          <section className="portal-panel max-w-lg rounded-2xl p-8 text-center">
+            <h1 className="text-xl font-bold text-white">Office access denied</h1>
+            <p className="mt-2 text-sm text-slate-400">{error}</p>
+            <button type="button" onClick={() => navigate('/office/login')} className="mt-5 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white">
+              Return to sign in
+            </button>
+          </section>
+        </main>
+      </EntryLayout>
+    );
+  }
+  if (!allowed) {
+    return <EntryLayout><main className="entry-main flex min-h-screen items-center justify-center text-sm text-slate-400">Restoring authorized workspace…</main></EntryLayout>;
+  }
+  return <OfficeDashboard />;
+}
+
+function EvaluationWorkspaceRoute() {
+  const { role } = useParams<{ role: string }>();
+  const navigate = useNavigate();
+  const [allowed, setAllowed] = useState(false);
+  const [error, setError] = useState('');
+  const [errorTitle, setErrorTitle] = useState('Could not verify demo availability');
+  const [isChecking, setIsChecking] = useState(true);
+  const [attempt, setAttempt] = useState(0);
+  const retry = () => {
+    setAllowed(false);
+    setError('');
+    setErrorTitle('Could not verify demo availability');
+    setIsChecking(true);
+    setAttempt((value) => value + 1);
+  };
+
+  useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
+    void checkEvaluationAccess(controller.signal)
+      .then(async (isEnabled) => {
+        if (!active) return;
+        if (!isEnabled) {
+          navigate('/', { replace: true });
+          return;
+        }
+        if (!['creator', 'reviewer', 'admin'].includes(role || '')) {
+          throw new Error('Unknown demonstration workspace.');
+        }
+        setErrorTitle('Could not open demo workspace');
+        await initializeEvaluationDemoSession();
+        if (!active) return;
+        setAllowed(true);
+      })
+      .catch((cause: unknown) => {
+        if (active) setError(cause instanceof Error ? cause.message : 'Could not verify demonstration access. Retry the request.');
+      })
+      .finally(() => {
+        if (active) setIsChecking(false);
+      });
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [attempt, navigate, role]);
+
+  if (error) {
+    return (
+      <EntryLayout>
+        <main className="entry-main flex min-h-screen items-center justify-center px-4">
+          <section className="portal-panel max-w-lg rounded-2xl p-8 text-center">
+            <h1 className="text-xl font-bold text-white">{errorTitle}</h1>
+            <p className="mt-2 text-sm text-slate-400">{error}</p>
+            <div className="mt-5 flex flex-wrap justify-center gap-3">
+              <button type="button" onClick={retry} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white">Retry</button>
+              <button type="button" onClick={() => navigate('/evaluation/workspaces')} className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300">
+                Return to demo workspaces
+              </button>
+            </div>
+          </section>
+        </main>
+      </EntryLayout>
+    );
+  }
+  if (isChecking || !allowed) {
+    return <EntryLayout><main className="entry-main flex min-h-screen items-center justify-center text-sm text-slate-400">Verifying demonstration workspace…</main></EntryLayout>;
+  }
+  return <OfficeDashboard publicDemo />;
+}
+
+export default function App() {
+  return (
+    <BrowserRouter basename={import.meta.env.BASE_URL}>
+      <ThemeProvider>
+        <Routes>
+          <Route path="/" element={<EntryLayout><ModeLanding /></EntryLayout>} />
+          <Route path="/office/login" element={<EntryLayout><OfficeLogin /></EntryLayout>} />
+          <Route path="/office/roles" element={<EntryLayout><RoleSelection /></EntryLayout>} />
+          <Route path="/office/dashboard/:role" element={<OfficeWorkspaceRoute />} />
+          <Route path="/office/dashboard" element={<Navigate to="/office/login" replace />} />
+          <Route path="/evaluation/login" element={<Navigate to="/evaluation/workspaces" replace />} />
+          <Route path="/evaluation/workspaces" element={<EntryLayout><EvaluationRoleSelection /></EntryLayout>} />
+          <Route path="/evaluation/dashboard/:role" element={<EvaluationWorkspaceRoute />} />
+          <Route path="/guest" element={<EntryLayout><GuestScanner /></EntryLayout>} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </ThemeProvider>
+    </BrowserRouter>
+  );
+}

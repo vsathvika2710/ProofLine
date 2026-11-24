@@ -4,7 +4,7 @@ from datetime import datetime, date
 
 ClaimType = Literal['numeric', 'comparative', 'date', 'promotional', 'other']
 ClaimStatus = Literal['supported', 'contradicted', 'unsupported', 'outdated', 'needs_human_review', 'not_affected']
-AssetStatus = Literal['approved', 'approval_invalidated', 'under_review', 'draft']
+AssetStatus = Literal['approved', 'approval_invalidated', 'under_review', 'draft', 'rejected', 'revision_requested']
 UserRole = Literal['admin', 'creator', 'reviewer', 'legal_compliance']
 TaskStatus = Literal['pending', 'approved', 'rejected', 'edited']
 
@@ -21,6 +21,7 @@ class EvidenceDocument(BaseModel):
     raw_text: str
     chunk_count: int = 0
     created_at: Optional[str] = None
+    organization_id: Optional[str] = None
 
 class EvidenceChunk(BaseModel):
     id: str
@@ -31,6 +32,7 @@ class EvidenceChunk(BaseModel):
     section_title: Optional[str] = None
     embedding: Optional[List[float]] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    organization_id: Optional[str] = None
 
 class StructuredFact(BaseModel):
     id: str
@@ -44,6 +46,7 @@ class StructuredFact(BaseModel):
     version: str = "v1.0"
     effective_date: Optional[str] = None
     updated_at: Optional[str] = None
+    organization_id: Optional[str] = None
 
 class ContentAsset(BaseModel):
     id: str
@@ -61,6 +64,10 @@ class ContentAsset(BaseModel):
     last_approved_at: Optional[str] = None
     version: int = 1
     created_at: Optional[str] = None
+    organization_id: Optional[str] = None
+    created_by: Optional[str] = None
+    revision_history: List[Dict[str, Any]] = Field(default_factory=list)
+    approval_history: List[Dict[str, Any]] = Field(default_factory=list)
 
 class Claim(BaseModel):
     id: str
@@ -79,6 +86,7 @@ class Claim(BaseModel):
     source_document_title: Optional[str] = None
     suggested_correction: Optional[str] = None
     created_at: Optional[str] = None
+    organization_id: Optional[str] = None
 
 class AffectedClaimItem(BaseModel):
     claim_id: Optional[str] = None
@@ -142,6 +150,9 @@ class ReviewTask(BaseModel):
     decided_by: Optional[str] = None
     decided_at: Optional[str] = None
     created_at: Optional[str] = None
+    organization_id: Optional[str] = None
+    content_version: int = 1
+    decision_history: List[Dict[str, Any]] = Field(default_factory=list)
 
 class AuditLogEntry(BaseModel):
     id: str
@@ -153,3 +164,4 @@ class AuditLogEntry(BaseModel):
     target_id: Optional[str] = None
     diff_payload: Dict[str, Any] = Field(default_factory=dict)
     notes: Optional[str] = None
+    organization_id: Optional[str] = None

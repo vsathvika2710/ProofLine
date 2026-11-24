@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { UserRole } from '../types';
 import { TabType } from './Sidebar';
+import { ThemeSelector } from './ThemeSelector';
 
 interface NavbarProps {
   currentScenario: string;
@@ -25,6 +26,12 @@ interface NavbarProps {
   onSelectTab: (tab: TabType) => void;
   onOpenDossier: () => void;
   onStartTour: () => void;
+  isJudgeDemo?: boolean;
+  canSwitchWorkspace?: boolean;
+  availableOfficeRoles?: Array<'creator' | 'reviewer' | 'admin'>;
+  onSelectOfficeRole?: (role: 'creator' | 'reviewer' | 'admin') => void;
+  onLogout?: () => void;
+  publicDemo?: boolean;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -36,6 +43,12 @@ export const Navbar: React.FC<NavbarProps> = ({
   onSelectTab,
   onOpenDossier,
   onStartTour,
+  isJudgeDemo = false,
+  canSwitchWorkspace = false,
+  availableOfficeRoles = [],
+  onSelectOfficeRole,
+  onLogout,
+  publicDemo = false,
 }) => {
   const roleLabels: Record<UserRole, { title: string; short: string; color: string }> = {
     legal_compliance: {
@@ -104,7 +117,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span>Product Overview</span>
           </button>
 
-          <button
+          {(!publicDemo || activeRole === 'brand_manager') && <button
             onClick={() => onSelectTab('impact')}
             className={`px-3.5 py-1.5 text-xs font-semibold rounded-xl transition-all flex items-center gap-1.5 ${
               activeTab === 'impact'
@@ -114,9 +127,9 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <Zap className="w-3.5 h-3.5 fill-amber-400" />
             <span>Change Impact Engine</span>
-          </button>
+          </button>}
 
-          <button
+          {(!publicDemo || activeRole === 'brand_manager' || activeRole === 'legal_compliance') && <button
             onClick={() => onSelectTab('vault')}
             className={`px-3.5 py-1.5 text-xs font-semibold rounded-xl transition-all flex items-center gap-1.5 ${
               activeTab === 'vault'
@@ -126,9 +139,9 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <Database className="w-3.5 h-3.5" />
             <span>Evidence Vault</span>
-          </button>
+          </button>}
 
-          <button
+          {(!publicDemo || activeRole === 'content_creator') && <button
             onClick={() => onSelectTab('reviewer')}
             className={`px-3.5 py-1.5 text-xs font-semibold rounded-xl transition-all flex items-center gap-1.5 ${
               activeTab === 'reviewer'
@@ -138,9 +151,9 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <ScanText className="w-3.5 h-3.5" />
             <span>Scanner</span>
-          </button>
+          </button>}
 
-          <button
+          {(!publicDemo || activeRole === 'brand_manager' || activeRole === 'legal_compliance') && <button
             onClick={() => onSelectTab('review_center')}
             className={`px-3.5 py-1.5 text-xs font-semibold rounded-xl transition-all flex items-center gap-1.5 ${
               activeTab === 'review_center'
@@ -149,13 +162,15 @@ export const Navbar: React.FC<NavbarProps> = ({
             }`}
           >
             <span>Review Queue</span>
-          </button>
+          </button>}
         </div>
 
         {/* Right Actions Toolbar */}
         <div className="flex items-center gap-2.5">
+          <ThemeSelector compact />
+
           {/* Dataset Switcher */}
-          <div className="hidden sm:flex items-center gap-1 bg-slate-900/80 border border-white/[0.08] rounded-xl p-1 text-xs">
+          {!publicDemo && <div className="hidden sm:flex items-center gap-1 bg-slate-900/80 border border-white/[0.08] rounded-xl p-1 text-xs">
             <button
               onClick={() => onSelectScenario('smartwatch')}
               className={`px-2.5 py-1 rounded-lg font-medium transition-all ${
@@ -178,7 +193,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               🧪 Foxtale
             </button>
-          </div>
+          </div>}
 
           {/* Interactive Guided Tour */}
           <button
@@ -190,34 +205,64 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span className="md:hidden">Tour</span>
           </button>
 
-          {/* Role Switcher */}
-          <div className="relative group">
-            <button
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl border ${roleLabels[activeRole].color} transition-all`}
-            >
+          {/* Workspace choices are constrained to roles returned by the authenticated backend. */}
+          {isJudgeDemo ? (
+            <div className="relative group">
+              <button
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl border ${roleLabels[activeRole].color}`}
+              >
+                <UserCheck className="w-3.5 h-3.5" />
+                <span>{publicDemo || canSwitchWorkspace ? 'Switch Workspace' : roleLabels[activeRole].short}</span>
+                <ChevronDown className="w-3 h-3 text-slate-400" />
+              </button>
+              <div className="absolute right-0 mt-1.5 w-56 bg-[#0d1222] border border-white/10 rounded-2xl shadow-2xl py-1.5 hidden group-hover:block z-50">
+                <div className="px-3.5 py-1 text-[10px] uppercase font-bold text-slate-400">{publicDemo ? 'Demo workspaces' : 'Authorized workspaces'}</div>
+                {availableOfficeRoles.map((role) => {
+                  const legacyRole: UserRole =
+                    role === 'creator' ? 'content_creator'
+                      : role === 'admin' ? 'brand_manager'
+                        : 'legal_compliance';
+                  return (
+                    <button
+                      key={role}
+                      onClick={() => onSelectOfficeRole?.(role)}
+                      className={`w-full text-left px-3.5 py-2 text-xs hover:bg-slate-800/80 ${
+                        activeRole === legacyRole ? 'text-cyan-400 font-bold' : 'text-slate-300'
+                      }`}
+                    >
+                      {publicDemo
+                        ? role === 'admin' ? 'Admin' : role === 'creator' ? 'Content Creator' : 'Reviewer'
+                        : roleLabels[legacyRole].short}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : canSwitchWorkspace ? (
+            <label className="inline-flex items-center gap-2 rounded-xl border border-slate-700 px-2.5 py-1.5 text-xs font-semibold text-slate-300">
+              <span className="hidden sm:inline">Switch Workspace</span>
+              <select
+                aria-label="Switch authorized Office workspace"
+                value={activeRole === 'brand_manager' ? 'admin' : activeRole === 'content_creator' ? 'creator' : 'reviewer'}
+                onChange={(event) => onSelectOfficeRole?.(event.target.value as 'creator' | 'reviewer' | 'admin')}
+                className="max-w-36 cursor-pointer bg-transparent text-xs outline-none"
+              >
+                {availableOfficeRoles.map((role) => <option key={role} value={role}>{role === 'admin' ? 'Admin' : role === 'creator' ? 'Content Creator' : 'Reviewer'}</option>)}
+              </select>
+            </label>
+          ) : (
+            <div className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl border ${roleLabels[activeRole].color}`}>
               <UserCheck className="w-3.5 h-3.5" />
               <span className="hidden xl:inline">{roleLabels[activeRole].title}</span>
               <span className="xl:hidden">{roleLabels[activeRole].short}</span>
-              <ChevronDown className="w-3 h-3 text-slate-400" />
-            </button>
-            <div className="absolute right-0 mt-1.5 w-64 bg-[#0d1222] border border-white/10 rounded-2xl shadow-2xl py-1.5 hidden group-hover:block z-50">
-              <div className="px-3.5 py-1 text-[10px] uppercase font-bold text-slate-400 tracking-wider font-mono">
-                Simulate Reviewer Role
-              </div>
-              {(Object.keys(roleLabels) as UserRole[]).map((r) => (
-                <button
-                  key={r}
-                  onClick={() => onSelectRole(r)}
-                  className={`w-full text-left px-3.5 py-2 text-xs hover:bg-slate-800/80 flex items-center justify-between ${
-                    activeRole === r ? 'text-cyan-400 font-bold bg-slate-800/60' : 'text-slate-300'
-                  }`}
-                >
-                  <span>{roleLabels[r].title}</span>
-                  {activeRole === r && <CheckCircle2 className="w-3.5 h-3.5 text-cyan-400" />}
-                </button>
-              ))}
             </div>
-          </div>
+          )}
+
+          {publicDemo && (
+            <span className="hidden lg:inline-flex rounded-lg border border-slate-700 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+              Fictional Demo
+            </span>
+          )}
 
           {/* Round 2 Dossier Button */}
           <button
@@ -228,6 +273,16 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span className="hidden sm:inline">100 Pts Dossier</span>
             <span className="sm:hidden">Dossier</span>
           </button>
+
+          {onLogout && (
+            <button
+              type="button"
+              onClick={onLogout}
+              className="px-3 py-1.5 text-xs font-semibold rounded-xl border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-800"
+            >
+              Logout
+            </button>
+          )}
         </div>
       </div>
     </header>

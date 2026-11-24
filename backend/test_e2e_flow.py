@@ -17,9 +17,33 @@ from backend.main import (
 )
 from backend.auth import CurrentUser
 from backend.database import db
+from backend.seed_data import load_seed_workspace
 
 def test_full_pipeline():
     print("=== PROOFLINE END-TO-END WORKFLOW TEST ===")
+    organization_id = "test-novawear-demo"
+    load_seed_workspace()
+    for collection in (db.documents.values(), db.chunks, db.facts.values(), db.assets.values(), db.claims.values(), db.review_tasks.values()):
+        for item in collection:
+            item.organization_id = organization_id
+    for entry in db.audit_log:
+        entry.organization_id = organization_id
+    admin = CurrentUser(
+        id="USR-ADMIN-01",
+        email="admin@example.test",
+        role="admin",
+        account_type="employee",
+        organization_id=organization_id,
+        available_roles=["admin"],
+    )
+    reviewer = CurrentUser(
+        id="USR-REV-01",
+        email="reviewer@example.test",
+        role="reviewer",
+        account_type="employee",
+        organization_id=organization_id,
+        available_roles=["reviewer"],
+    )
     
     # 1. Health
     h = health()
@@ -27,16 +51,16 @@ def test_full_pipeline():
     assert h["status"] == "healthy"
     
     # 2. Stats
-    s = get_dashboard_stats()
+    s = get_dashboard_stats(admin)
     print("2. Initial Assets:", s["total_assets"], "| Total Claims:", s["total_claims"])
     assert s["total_assets"] >= 3
     
     # 3. Documents & Facts
-    docs = list_evidence_documents()
+    docs = list_evidence_documents(admin)
     print(f"3. Evidence Vault: {len(docs)} documents loaded.")
     assert len(docs) >= 3
     
-    facts = list_structured_facts()
+    facts = list_structured_facts(admin)
     print(f"4. Structured Facts: {len(facts)} facts active.")
     assert len(facts) >= 4
     
@@ -44,9 +68,8 @@ def test_full_pipeline():
     print(f"   Selected Fact: {warranty_fact.name} (Current: {warranty_fact.current_value} {warranty_fact.unit})")
     
     # 4. Trigger Fact Change (Warranty 2 -> 1)
-    reviewer = CurrentUser(id="USR-REV-01", email="compliance@inkloom.ai", role="reviewer")
     req = FactChangeRequest(fact_id=warranty_fact.id, new_value="1")
-    impact = trigger_fact_change_impact(req, reviewer)
+    impact = trigger_fact_change_impact(req, admin)
     
     print("\n=== SIGNATURE: CHANGE IMPACT ENGINE RESULT ===")
     headline = f"1 fact changed, {impact.items_need_review} items need review, {impact.items_unaffected} checked, not affected"
@@ -65,7 +88,7 @@ def test_full_pipeline():
     assert impact.items_unaffected >= 1
     
     # 5. Review Centre
-    tasks = db.list_tasks(status="pending")
+    tasks = db.list_tasks(status="pending", organization_id=organization_id)
     print(f"\n5. Pending Review Tasks Created: {len(tasks)}")
     assert len(tasks) >= 1
     
@@ -83,7 +106,7 @@ def test_full_pipeline():
     print(f"   Updated Asset Version: v{dec_res['asset'].version}")
     
     # 6. Audit Trail
-    logs = get_audit_trail(5)
+    logs = get_audit_trail(5, admin)
     print(f"\n6. Audit Trail Ledger: {len(logs)} entries retrieved.")
     for entry in logs:
         print(f"   [{entry.timestamp}] {entry.actor} ({entry.actor_role}): {entry.action} -> {entry.notes}")

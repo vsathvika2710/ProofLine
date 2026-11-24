@@ -140,3 +140,140 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at DESC);
+
+-- 10. Office Workspace authorization (no duplicate auth or organization tables)
+CREATE TABLE IF NOT EXISTS organizations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    industry VARCHAR(255),
+    website TEXT,
+    is_demo BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_organizations_demo_name UNIQUE (name, is_demo)
+);
+
+CREATE TABLE IF NOT EXISTS user_profiles (
+    user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    full_name VARCHAR(255),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS authorized_identities (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    normalized_email TEXT NOT NULL UNIQUE,
+    account_type VARCHAR(32) NOT NULL CHECK (account_type IN ('employee', 'judge_demo')),
+    global_role VARCHAR(32) NOT NULL DEFAULT 'employee'
+        CHECK (global_role IN ('employee', 'super_admin')),
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+ALTER TABLE authorized_identities
+    ADD COLUMN IF NOT EXISTS global_role VARCHAR(32) NOT NULL DEFAULT 'employee'
+    CHECK (global_role IN ('employee', 'super_admin'));
+
+CREATE TABLE IF NOT EXISTS organization_memberships (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    authorized_identity_id UUID REFERENCES authorized_identities(id) ON DELETE CASCADE,
+    authenticated_user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+    assigned_role VARCHAR(32) NOT NULL CHECK (assigned_role IN ('creator', 'reviewer', 'admin')),
+    membership_status VARCHAR(32) NOT NULL DEFAULT 'active'
+        CHECK (membership_status IN ('active', 'inactive')),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT membership_identity_or_user CHECK (
+        (authorized_identity_id IS NOT NULL) <> (authenticated_user_id IS NOT NULL)
+    ),
+    CONSTRAINT uq_membership_identity_org_role
+        UNIQUE (organization_id, authorized_identity_id, assigned_role)
+);
+
+ALTER TABLE authorized_identities ENABLE ROW LEVEL SECURITY;
+ALTER TABLE organization_memberships ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_profiles ENABLE ROW LEVEL SECURITY;
+
+GRANT USAGE ON SCHEMA public TO service_role;
+GRANT SELECT ON TABLE authorized_identities, organization_memberships, user_profiles TO service_role;
+
+CREATE INDEX IF NOT EXISTS idx_authorized_identity_email
+    ON authorized_identities(normalized_email) WHERE is_active;
+CREATE INDEX IF NOT EXISTS idx_memberships_org ON organization_memberships(organization_id);
+CREATE INDEX IF NOT EXISTS idx_memberships_identity ON organization_memberships(authorized_identity_id);
+CREATE INDEX IF NOT EXISTS idx_memberships_user ON organization_memberships(authenticated_user_id);
+
+-- Organization data isolation at the table level.
+ALTER TABLE evidence_documents ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id);
+ALTER TABLE structured_facts ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id);
+ALTER TABLE content_assets ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id);
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id);
+ALTER TABLE impact_events ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id);
+ALTER TABLE review_tasks ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id);
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id);
+
+ALTER TABLE evidence_documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE structured_facts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE content_assets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE claims ENABLE ROW LEVEL SECURITY;
+ALTER TABLE impact_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE review_tasks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_log ENABLE ROW LEVEL SECURITY;
+
+CREATE OR REPLACE FUNCTION proofline_user_organization_ids()
+RETURNS SETOF UUID
+LANGUAGE sql STABLE
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+    SELECT organization_id
+    FROM organization_memberships
+    WHERE membership_status = 'active'
+      AND (
+          authenticated_user_id = auth.uid()
+          OR authorized_identity_id IN (
+              SELECT id
+              FROM authorized_identities
+              WHERE normalized_email = (
+                  SELECT lower(email) FROM auth.users WHERE id = auth.uid()
+              )
+          )
+      )
+$$;
+
+DO $$
+DECLARE table_name TEXT;
+BEGIN
+    FOREACH table_name IN ARRAY ARRAY[
+        'evidence_documents','structured_facts','content_assets','claims',
+        'impact_events','review_tasks','audit_log'
+    ]
+    LOOP
+        EXECUTE format(
+            'DROP POLICY IF EXISTS proofline_org_isolation_%s ON %I',
+            table_name, table_name
+        );
+        EXECUTE format(
+            'CREATE POLICY proofline_org_isolation_%1$s ON %1$I
+             USING (organization_id IN (SELECT proofline_user_organization_ids()))
+             WITH CHECK (organization_id IN (SELECT proofline_user_organization_ids()))',
+            table_name
+        );
+    END LOOP;
+END $$;
+
+-- 11. Independent hackathon Evaluation Access
+CREATE TABLE IF NOT EXISTS evaluation_accounts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    auth_user_id UUID UNIQUE REFERENCES auth.users(id) ON DELETE CASCADE,
+    normalized_email TEXT NOT NULL UNIQUE,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    expires_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS evaluation_role_assignments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    evaluation_account_id UUID NOT NULL REFERENCES evaluation_accounts(id) ON DELETE CASCADE,
+    assigned_role VARCHAR(32) NOT NULL CHECK (assigned_role IN ('creator', 'reviewer', 'admin')),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_evaluation_role UNIQUE (evaluation_account_id, assigned_role)
+);

@@ -180,7 +180,15 @@ class ClaimIntelligenceEngine:
             print(f"[ClaimIntelligence] Gemini extraction failed: {e}. Using deterministic fallback.")
             return None
 
-    def match_and_verify_claim(self, claim: ExtractedClaimSchema, asset_id: str) -> Claim:
+    def match_and_verify_claim(
+        self,
+        claim: ExtractedClaimSchema,
+        asset_id: str,
+        organization_id: Optional[str] = None,
+    ) -> Claim:
+        if organization_id:
+            return self._match_organization_claim(claim, asset_id, organization_id)
+
         claim_id = f"CLM-{uuid.uuid4().hex[:8].upper()}"
         claim_lower = claim.claim_text.lower()
         facts = db.list_facts()
@@ -352,6 +360,90 @@ class ClaimIntelligenceEngine:
             quoted_passage=None,
             source_document_title=None,
             suggested_correction="Provide an approved reference document or remove unverified claim."
+        )
+
+    def _match_organization_claim(self, claim: ExtractedClaimSchema, asset_id: str, organization_id: str) -> Claim:
+        claim_id = f"CLM-{uuid.uuid4().hex[:8].upper()}"
+        claim_lower = claim.claim_text.lower()
+        matched_fact = next(
+            (
+                fact for fact in db.list_facts(organization_id)
+                if (
+                    ('warranty' in fact.fact_key.lower() and ('warranty' in claim_lower or 'coverage' in claim_lower))
+                    or ('water' in fact.fact_key.lower() and ('water' in claim_lower or 'atm' in claim_lower))
+                    or ('battery' in fact.fact_key.lower() and 'battery' in claim_lower)
+                    or ('color' in fact.fact_key.lower() and ('color' in claim_lower or 'finish' in claim_lower))
+                    or ('price' in fact.fact_key.lower() and ('$' in claim_lower or 'price' in claim_lower or 'msrp' in claim_lower))
+                )
+            ),
+            None,
+        )
+        if matched_fact:
+            exact_result = exact_value_check(claim.claim_text, matched_fact.current_value, matched_fact.unit)
+            if exact_result:
+                status = exact_result["status"]
+                unit = f" {matched_fact.unit}" if matched_fact.unit else ""
+                return Claim(
+                    id=claim_id,
+                    asset_id=asset_id,
+                    claim_text=claim.claim_text,
+                    claim_type=claim.claim_type,
+                    exact_source_sentence=claim.exact_source_sentence,
+                    location_start=claim.location_start,
+                    location_end=claim.location_end,
+                    matched_fact_id=matched_fact.id,
+                    matched_fact_name=matched_fact.name,
+                    verification_status=status,
+                    confidence=0.99 if status == "supported" else 0.96,
+                    reason=exact_result["reason"],
+                    quoted_passage=matched_fact.source_passage,
+                    source_document_title=matched_fact.source_document_title,
+                    suggested_correction=None if status == "supported" else (
+                        f"Update claim to match approved specification: '{matched_fact.current_value}{unit}'."
+                    ),
+                    organization_id=organization_id,
+                )
+
+        chunks = db.search_chunks(
+            get_embedding(claim.claim_text),
+            claim.claim_text,
+            top_k=1,
+            organization_id=organization_id,
+        )
+        if chunks:
+            chunk = chunks[0]
+            return Claim(
+                id=claim_id,
+                asset_id=asset_id,
+                claim_text=claim.claim_text,
+                claim_type=claim.claim_type,
+                exact_source_sentence=claim.exact_source_sentence,
+                location_start=claim.location_start,
+                location_end=claim.location_end,
+                matched_fact_id=matched_fact.id if matched_fact else None,
+                matched_fact_name=matched_fact.name if matched_fact else None,
+                verification_status="needs_human_review",
+                confidence=0.75,
+                reason="An organization-approved passage may be relevant; reviewer verification is required.",
+                quoted_passage=chunk.passage_text,
+                source_document_title=chunk.document_title or "Approved Evidence Document",
+                suggested_correction="Verify the full claim against the cited organization-approved source.",
+                organization_id=organization_id,
+            )
+
+        return Claim(
+            id=claim_id,
+            asset_id=asset_id,
+            claim_text=claim.claim_text,
+            claim_type=claim.claim_type,
+            exact_source_sentence=claim.exact_source_sentence,
+            location_start=claim.location_start,
+            location_end=claim.location_end,
+            verification_status="unsupported",
+            confidence=0.9,
+            reason="No organization-approved evidence was found for this assertion.",
+            suggested_correction="Attach an approved organization reference or remove the unverified claim.",
+            organization_id=organization_id,
         )
 
 claim_engine = ClaimIntelligenceEngine()

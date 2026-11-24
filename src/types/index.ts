@@ -69,7 +69,7 @@ export interface ContentAsset {
   type: 'website_page' | 'sales_brochure' | 'instagram_post' | 'email_newsletter' | 'packaging_label' | 'support_faq';
   channel: string;
   urlOrPath: string;
-  status: 'approved' | 'approval_invalidated' | 'under_review' | 'draft';
+  status: 'approved' | 'approval_invalidated' | 'under_review' | 'draft' | 'rejected' | 'revision_requested';
   lastScanned: string;
   content: string;
   linkedFactIds: string[];

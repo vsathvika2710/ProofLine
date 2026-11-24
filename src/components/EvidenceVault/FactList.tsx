@@ -22,6 +22,7 @@ interface FactListProps {
   documents: EvidenceDocument[];
   onSelectFactForImpact: (factId: string) => void;
   onAddNewFact: (newFact: Fact) => void;
+  readOnly?: boolean;
 }
 
 export const FactList: React.FC<FactListProps> = ({
@@ -29,6 +30,7 @@ export const FactList: React.FC<FactListProps> = ({
   documents,
   onSelectFactForImpact,
   onAddNewFact,
+  readOnly = false,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('ALL');
@@ -60,9 +62,9 @@ export const FactList: React.FC<FactListProps> = ({
 
   const handleCreateFact = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newName || !newValue) return;
+    if (!newName.trim() || !newValue.trim() || !newPassage.trim()) return;
 
-    const doc = documents.find((d) => d.id === newDocId) || documents[0];
+    const doc = documents.find((d) => d.id === newDocId);
     const created: Fact = {
       id: newCode,
       code: newCode,
@@ -73,9 +75,9 @@ export const FactList: React.FC<FactListProps> = ({
       version: 'v1.0',
       owner: newOwner,
       status: 'active',
-      sourceDocId: doc.id,
-      sourceDocName: doc.title,
-      sourcePassage: newPassage || 'Approved during engineering review meeting.',
+      sourceDocId: doc?.id || '',
+      sourceDocName: doc?.title || 'Manual citation',
+      sourcePassage: newPassage.trim(),
       effectiveDate: new Date().toISOString().split('T')[0],
       expiryDate: '2027-12-31',
       tags: [newCategory.toLowerCase().replace(/\s+/g, '-')],
@@ -96,18 +98,20 @@ export const FactList: React.FC<FactListProps> = ({
           <div className="flex items-center gap-2">
             <h2 className="text-2xl font-bold text-white tracking-tight">Evidence Vault</h2>
             <span className="text-xs font-mono font-bold px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-              {facts.length} Verified Facts
+              {facts.length} Facts
             </span>
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            Single Source of Truth: Approved corporate policies, specs, certifications, and brand terminology.
+            Facts and source citations available in this workspace.
           </p>
         </div>
 
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowAddModal(true)}
-            className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white transition-all shadow-md shadow-cyan-900/30"
+            disabled={readOnly}
+            title={readOnly ? 'Fact changes are not persisted to organization records.' : undefined}
+            className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white transition-all shadow-md shadow-cyan-900/30 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Plus className="w-4 h-4" />
             Add Approved Fact
@@ -452,13 +456,15 @@ export const FactList: React.FC<FactListProps> = ({
 
               <div>
                 <label className="text-[11px] font-mono text-slate-400 block mb-1">
-                  Source Evidence Document
+                  Source Evidence Document{documents.length ? '' : ' (optional)'}
                 </label>
                 <select
+                  required={documents.length > 0}
                   value={newDocId}
                   onChange={(e) => setNewDocId(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white"
                 >
+                  {!documents.length && <option value="">Manual citation</option>}
                   {documents.map((d) => (
                     <option key={d.id} value={d.id}>
                       {d.title} ({d.docNumber})
@@ -473,6 +479,7 @@ export const FactList: React.FC<FactListProps> = ({
                 </label>
                 <textarea
                   rows={2}
+                  required
                   value={newPassage}
                   onChange={(e) => setNewPassage(e.target.value)}
                   placeholder="Quote the exact section from the specification or policy"

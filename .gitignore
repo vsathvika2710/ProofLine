@@ -29,3 +29,10 @@ __pycache__/
 *.njsproj
 *.sln
 *.sw?
+# Environment variables
+.env.*
+!.env.example
+
+# Python virtual environments
+.venv/
+venv/

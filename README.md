@@ -81,7 +81,80 @@ npm install
 npm run dev
 ```
 
+### Guest product verification
+
+Guest Mode sends text, PDF, evidence-search, and assessment requests to the FastAPI backend. For local development, run the backend on port `8000`; Vite proxies `/api` requests to `http://127.0.0.1:8000` by default. Set `VITE_API_PROXY_TARGET` to use a different local backend address. For a deployed frontend calling a separate API, set `VITE_API_BASE_URL` and configure `CORS_ALLOWED_ORIGINS` as a comma-separated list of exact frontend origins; production has no default CORS origins.
+
+Guest evidence is deliberately limited to the fictional NovaWear demonstration facts and reference text provided by the guest. It does not search the live web or the Office Evidence Vault. Text and PDFs are processed for the request and are not added to the application database. PDF support requires the declared `PyMuPDF` dependency; image-only or scanned PDFs are not OCR-processed. Image extraction is optional and requires a server-side `GEMINI_API_KEY`; when enabled, the uploaded image is sent to Google Gemini for extraction. Never put this key in frontend code or a `VITE_` variable.
+
+The guest endpoints have a process-local rate limit, which is not shared across multiple workers or instances. Office APIs require a Supabase-authenticated bearer token and database-authorized role, but the prototype's current data repository is process-memory based and does not consistently scope records by organization. Do not deploy it with private multi-tenant company data until the data repositories enforce organization isolation.
+
 ---
+
+## Office Workspace setup
+
+Set `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`.
+For a new Supabase/PostgreSQL database, apply `backend/schema.sql` and then
+`backend/migrations/20261124_super_admin_auth.sql` and
+`backend/migrations/20261124_office_auth_read_grants.sql`; for an existing database created from this
+schema, apply both migrations. The read-grants migration gives the backend's service role SELECT
+access to authorization identities, memberships, and profiles without disabling RLS. Keep
+`SUPABASE_SERVICE_ROLE_KEY` only in the FastAPI server environment. The authorized identity allowlist
+is database-backed and must be explicitly provisioned.
+
+Employee workspaces come from active organization memberships. Single-role employees are routed
+directly to their assigned workspace; accounts with multiple database-authorized roles may switch only
+among those roles. A Super Admin is represented by `global_role = 'super_admin'` and active
+`admin`, `creator`, and `reviewer` memberships in the neutral `ProofLine Isolated Test` organization.
+
+Office login uses Supabase Auth email/password through backend `POST /api/auth/login`, with
+per-IP rate limiting and a generic invalid-credentials response. The backend checks the active
+authorization identity before returning a Supabase session. Office sign-out revokes the provider
+session through `POST /api/auth/logout`; Evaluation Access continues to use its separate anonymous
+session flow.
+
+To provision the initial Super Admin, apply the schema and migration as described above, configure
+`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`,
+`VITE_SUPABASE_URL`, and `VITE_SUPABASE_ANON_KEY`, then run this from the project root:
+
+```powershell
+python -m backend.seed_super_admin
+```
+
+The script prompts for the initial password twice without echoing it and writes it only to Supabase
+Auth; it never stores or prints the plaintext password. Keep the service-role key exclusively in the
+FastAPI environment, never in a `VITE_` variable. If Supabase is not configured, provisioning stops
+without creating a local or in-memory substitute.
+
+## Public Evaluation Access
+
+Set `ENABLE_EVALUATION_ACCESS=true` on the FastAPI server to show Evaluation Access and permit the
+public demo routes. The homepage, selector and dashboard routes check `GET /api/config/features`;
+the server remains authoritative, and evaluation API requests are rejected while the flag is off.
+
+The public demo has no login or role credentials. Evaluation Creator drafts, submissions, and Reviewer
+decisions use the dedicated `/api/evaluation/demo/*` API and an opaque HttpOnly, SameSite cookie.
+Workspace records are held in process memory, keyed by a server-generated session token, limited per
+session, and expire after one hour of inactivity. They are not stored in the shared Office database;
+they are lost on backend restart. The browser never supplies a tenant or session identifier.
+
+The Evaluation Reviewer workspace displays the session's submitted claims and returned evidence,
+supports approve/reject/revision decisions, and records the reviewer rationale for rejection or
+revision requests. Decisions require confirmation and are retained with the submitted content version;
+the server rejects duplicate decisions and records actor, role, session, resource, and version metadata
+for workflow events. Contradicted claims block approval in the demo. Evidence versions are not supplied
+by the demo evidence source, and Admin fact changes are not connected to this isolated review store.
+
+Claim extraction and verification reuse the Guest endpoints, which only consult the fictional public
+NovaWear evidence collection. Creator draft text is not passed as evidence. Guest upload limits apply;
+PDF extraction is text-only, image extraction requires server-side configuration, and uploaded files
+are not retained. Evaluation workspace endpoints return 404 when `ENABLE_EVALUATION_ACCESS` is off.
+
+The existing Office content and evidence APIs do not enforce organization-level data isolation. The
+Office Creator view therefore reports its workflows as unavailable and does not call those APIs.
+Organization-scoped Office Creator storage, verification, and review integration are still required.
+The evaluation account tables and authenticated evaluation API are retained for legacy use but are not
+part of this public demo path.
 
 ## 🧪 4. 30-Claim Evaluation Benchmark
 

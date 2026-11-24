@@ -18,6 +18,7 @@ interface SidebarProps {
   onSelectTab: (tab: TabType) => void;
   pendingTasksCount: number;
   factsCount: number;
+  activeOfficeRole?: 'creator' | 'reviewer' | 'admin';
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -25,6 +26,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectTab,
   pendingTasksCount,
   factsCount,
+  activeOfficeRole = 'creator',
 }) => {
   const navItems: {
     id: TabType;
@@ -96,7 +98,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <span className="text-cyan-400/80">v2.0</span>
         </div>
 
-        {navItems.map((item) => {
+        {navItems.filter((item) => {
+          if (activeOfficeRole === 'creator') {
+            return ['landing', 'reviewer'].includes(item.id);
+          }
+          if (activeOfficeRole === 'reviewer') {
+            return ['landing', 'vault', 'review_center'].includes(item.id);
+          }
+          return true;
+        }).map((item) => {
           const isActive = activeTab === item.id;
           return (
             <button

@@ -395,7 +395,7 @@ export function runChangeImpactSimulation(
         affectedClaims.push({
           claimText: '2-year warranty / two years of coverage',
           reason: `Asset contains reference to superseded warranty terms (${oldVal}) which no longer matches approved standard (${newFactValue}).`,
-          suggestedFix: '1-year limited manufacturer warranty',
+          suggestedFix: newFactValue,
         });
       }
     } else if (targetFact.code === 'FACT-RTN-05' || targetFact.name.toLowerCase().includes('return')) {
@@ -404,7 +404,7 @@ export function runChangeImpactSimulation(
         affectedClaims.push({
           claimText: '30-day return policy',
           reason: `Return window shortened to 14 days per updated consumer terms.`,
-          suggestedFix: '14 calendar days from delivery date',
+          suggestedFix: newFactValue,
         });
       }
     } else if (targetFact.code === 'FACT-FOX-01') {
@@ -416,6 +416,17 @@ export function runChangeImpactSimulation(
           suggestedFix: newFactValue,
         });
       }
+    }
+
+    // Generic fallback: detect the previous approved value in copy for facts
+    // without a dedicated rule. This is exact text matching, not semantic AI.
+    if (!isAffected && oldVal.trim() && oldVal.trim().length >= 3 && contentLower.includes(oldVal.trim().toLowerCase())) {
+      isAffected = true;
+      affectedClaims.push({
+        claimText: oldVal,
+        reason: `Asset contains the previous approved value (${oldVal}) for ${targetFact.name}.`,
+        suggestedFix: newFactValue,
+      });
     }
 
     if (isAffected) {

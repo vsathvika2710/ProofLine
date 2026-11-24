@@ -19,7 +19,8 @@ class ChangeImpactEngine:
         fact_id: str,
         new_value: str,
         actor: str = "Admin",
-        actor_role: str = "admin"
+        actor_role: str = "admin",
+        organization_id: Optional[str] = None,
     ) -> ChangeImpactResult:
         """
         Signature Feature: Walks the fact-claim-asset graph when a fact changes.
@@ -29,7 +30,7 @@ class ChangeImpactEngine:
         4. Invalidates approval on affected assets and creates human review tasks.
         5. Confirms unaffected claims as 'checked, not affected'.
         """
-        fact = db.get_fact(fact_id)
+        fact = db.get_fact(fact_id, organization_id)
         if not fact:
             raise ValueError(f"Fact with ID '{fact_id}' not found.")
 
@@ -38,6 +39,7 @@ class ChangeImpactEngine:
         event_id = f"IMP-{uuid.uuid4().hex[:8].upper()}"
 
         # Update the fact in the database
+        db.record_fact_version(fact, actor)
         fact.current_value = new_value
         fact.version = f"v{float(fact.version.replace('v', '')) + 0.1:.1f}" if fact.version.startswith('v') else "v2.0"
         fact.updated_at = datetime.utcnow().isoformat() + "Z"
@@ -51,16 +53,17 @@ class ChangeImpactEngine:
             target_entity="structured_facts",
             target_id=fact.id,
             diff_payload={"old_value": old_value, "new_value": new_value, "fact_key": fact_key},
-            notes=f"Updated fact '{fact.name}' from '{old_value}' to '{new_value}'."
+            notes=f"Updated fact '{fact.name}' from '{old_value}' to '{new_value}'.",
+            organization_id=organization_id,
         )
 
-        all_assets = db.list_assets()
+        all_assets = db.list_assets(organization_id)
         affected_assets: List[AffectedAssetItem] = []
         unaffected_assets: List[UnaffectedAssetItem] = []
         created_tasks_count = 0
 
         for asset in all_assets:
-            asset_claims = db.get_claims_by_asset(asset.id)
+            asset_claims = db.get_claims_by_asset(asset.id, organization_id)
             asset_affected_claims: List[AffectedClaimItem] = []
             asset_is_affected = False
 
@@ -143,7 +146,9 @@ class ChangeImpactEngine:
                             suggested_text=suggested_text,
                             explanation=f"Fact '{fact.name}' updated ({old_value} → {new_value}). Human review required before re-approving asset.",
                             cited_source=f"{fact.source_document_title or 'Approved Spec'} {fact.version}: \"{fact.source_passage}\"",
-                            status="pending"
+                            status="pending",
+                            organization_id=organization_id,
+                            content_version=asset.version,
                         )
                         db.add_task(review_task)
                         created_tasks_count += 1
@@ -162,7 +167,8 @@ class ChangeImpactEngine:
                     target_entity="content_assets",
                     target_id=asset.id,
                     diff_payload={"asset_title": asset.title, "affected_claims": len(asset_affected_claims)},
-                    notes=f"Asset '{asset.title}' approval automatically invalidated due to fact change."
+                    notes=f"Asset '{asset.title}' approval automatically invalidated due to fact change.",
+                    organization_id=organization_id,
                 )
 
                 affected_assets.append(AffectedAssetItem(
@@ -203,7 +209,9 @@ class ChangeImpactEngine:
             tasks_created_count=created_tasks_count
         )
 
-        db.impact_events.insert(0, result.dict())
+        impact_event = result.dict()
+        impact_event["organization_id"] = organization_id
+        db.impact_events.insert(0, impact_event)
         return result
 
 impact_engine = ChangeImpactEngine()

@@ -22,7 +22,9 @@ interface ReviewQueueProps {
   tasks: ReviewTask[];
   auditLogs: AuditLogEntry[];
   activeRole: UserRole;
-  onUpdateTask: (task: ReviewTask, log: AuditLogEntry) => void;
+  onUpdateTask: (task: ReviewTask, log: AuditLogEntry) => void | Promise<void>;
+  readOnly?: boolean;
+  professionalMode?: boolean;
 }
 
 export const ReviewQueue: React.FC<ReviewQueueProps> = ({
@@ -30,6 +32,8 @@ export const ReviewQueue: React.FC<ReviewQueueProps> = ({
   auditLogs,
   activeRole,
   onUpdateTask,
+  readOnly = false,
+  professionalMode = false,
 }) => {
   const [activeTab, setActiveTab] = useState<'queue' | 'audit'>('queue');
   const [selectedTask, setSelectedTask] = useState<ReviewTask | null>(null);
@@ -37,6 +41,8 @@ export const ReviewQueue: React.FC<ReviewQueueProps> = ({
   const [statusFilter, setStatusFilter] = useState<string>('pending');
   const [editedText, setEditedText] = useState<string>('');
   const [reviewNote, setReviewNote] = useState<string>('');
+  const [decisionError, setDecisionError] = useState('');
+  const [savingDecision, setSavingDecision] = useState(false);
 
   const filteredTasks = tasks.filter((t) => {
     const matchesRole = roleFilter === 'ALL' || t.assignedRole === roleFilter;
@@ -48,16 +54,13 @@ export const ReviewQueue: React.FC<ReviewQueueProps> = ({
     setSelectedTask(task);
     setEditedText(task.suggestedText);
     setReviewNote('');
+    setDecisionError('');
   };
 
-  const handleApprove = () => {
-    if (!selectedTask) return;
-
-    confetti({
-      particleCount: 80,
-      spread: 60,
-      origin: { y: 0.6 },
-    });
+  const handleApprove = async () => {
+    if (readOnly || !selectedTask || savingDecision) return;
+    setSavingDecision(true);
+    setDecisionError('');
 
     const updated: ReviewTask = {
       ...selectedTask,
@@ -87,12 +90,25 @@ export const ReviewQueue: React.FC<ReviewQueueProps> = ({
       details: `Approved revision for publication. Review notes: "${reviewNote || 'Standard compliance approval'}"`,
     };
 
-    onUpdateTask(updated, newLog);
-    setSelectedTask(null);
+    try {
+      await onUpdateTask(updated, newLog);
+      confetti({
+        particleCount: 80,
+        spread: 60,
+        origin: { y: 0.6 },
+      });
+      setSelectedTask(null);
+    } catch (error) {
+      setDecisionError(error instanceof Error ? error.message : 'The review decision could not be saved.');
+    } finally {
+      setSavingDecision(false);
+    }
   };
 
-  const handleReject = () => {
-    if (!selectedTask) return;
+  const handleReject = async () => {
+    if (readOnly || !selectedTask || savingDecision) return;
+    setSavingDecision(true);
+    setDecisionError('');
 
     const updated: ReviewTask = {
       ...selectedTask,
@@ -122,8 +138,14 @@ export const ReviewQueue: React.FC<ReviewQueueProps> = ({
       details: `Rejected change. Rationale: "${reviewNote || 'Needs editorial re-drafting'}"`,
     };
 
-    onUpdateTask(updated, newLog);
-    setSelectedTask(null);
+    try {
+      await onUpdateTask(updated, newLog);
+      setSelectedTask(null);
+    } catch (error) {
+      setDecisionError(error instanceof Error ? error.message : 'The review decision could not be saved.');
+    } finally {
+      setSavingDecision(false);
+    }
   };
 
   return (
@@ -195,7 +217,7 @@ export const ReviewQueue: React.FC<ReviewQueueProps> = ({
 
             <div className="flex items-center gap-1.5">
               <span className="text-xs font-mono text-slate-400 mr-1">Status:</span>
-              {['ALL', 'pending', 'approved', 'rejected'].map((st) => (
+              {['ALL', 'pending', 'approved', 'rejected', 'modified'].map((st) => (
                 <button
                   key={st}
                   onClick={() => setStatusFilter(st)}
@@ -205,7 +227,7 @@ export const ReviewQueue: React.FC<ReviewQueueProps> = ({
                       : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
                   }`}
                 >
-                  {st}
+                  {st === 'modified' ? 'revision requested' : st}
                 </button>
               ))}
             </div>
@@ -299,7 +321,9 @@ export const ReviewQueue: React.FC<ReviewQueueProps> = ({
                 Cryptographically tracked decisions: who updated facts, who invalidated approvals, and who signed off.
               </p>
             </div>
-            <span className="text-xs font-mono text-emerald-400">SOC2 Type II Audit Ready</span>
+            <span className="text-xs font-mono text-emerald-400">
+              {professionalMode ? 'Governance event history' : 'SOC2 Type II Audit Ready'}
+            </span>
           </div>
 
           <div className="relative pl-6 space-y-6 before:absolute before:left-2 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-800">
@@ -331,7 +355,8 @@ export const ReviewQueue: React.FC<ReviewQueueProps> = ({
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-4xl w-full p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto">
             <button
-              onClick={() => setSelectedTask(null)}
+              onClick={() => { if (!savingDecision) setSelectedTask(null); }}
+              disabled={savingDecision}
               className="absolute top-4 right-4 p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
             >
               <X className="w-5 h-5" />
@@ -339,7 +364,7 @@ export const ReviewQueue: React.FC<ReviewQueueProps> = ({
 
             <div className="flex items-center gap-2 mb-2 text-xs font-mono text-cyan-400">
               <ShieldCheck className="w-4 h-4" />
-              <span>CONTENT RE-VERIFICATION &amp; DIFF APPROVAL</span>
+              <span>CONTENT REVIEW &amp; DECISION</span>
             </div>
             <h3 className="text-xl font-bold text-white mb-1">{selectedTask.assetTitle}</h3>
             <p className="text-xs text-slate-400 mb-6">
@@ -363,13 +388,14 @@ export const ReviewQueue: React.FC<ReviewQueueProps> = ({
               {/* Proposed Replacement Column */}
               <div className="bg-slate-950 p-4 rounded-xl border border-emerald-500/30">
                 <div className="flex items-center justify-between text-xs font-mono text-emerald-400 font-bold mb-2">
-                  <span>Suggested Compliant Copy</span>
-                  <span className="text-[10px] bg-emerald-500/20 px-2 py-0.5 rounded">AI PROPOSAL</span>
+                  <span>Suggested / Reviewer-edited Copy</span>
+                  <span className="text-[10px] bg-emerald-500/20 px-2 py-0.5 rounded">REVIEW COPY</span>
                 </div>
                 <textarea
                   rows={6}
                   value={editedText}
                   onChange={(e) => setEditedText(e.target.value)}
+                  readOnly={readOnly}
                   className="w-full bg-slate-900/60 border border-slate-700/80 rounded-lg p-3 text-xs text-emerald-300 font-sans leading-relaxed focus:outline-none focus:border-emerald-500"
                 />
               </div>
@@ -384,6 +410,7 @@ export const ReviewQueue: React.FC<ReviewQueueProps> = ({
                 type="text"
                 value={reviewNote}
                 onChange={(e) => setReviewNote(e.target.value)}
+                readOnly={readOnly}
                 placeholder="e.g. Verified against Warranty Policy v3.2 Section 4.1. Approved for production deploy."
                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500 font-mono"
               />
@@ -395,23 +422,26 @@ export const ReviewQueue: React.FC<ReviewQueueProps> = ({
                 Acting as: <span className="text-slate-300">{activeRole}</span>
               </div>
 
-              <div className="flex items-center gap-2">
+              {readOnly ? <p className="text-xs text-amber-400">Review decisions are unavailable because this workspace is not connected to organization storage.</p> : <div className="flex items-center gap-2">
                 <button
                   onClick={handleReject}
-                  className="px-4 py-2 text-xs font-semibold rounded-xl bg-red-600/20 hover:bg-red-600/30 text-red-300 border border-red-500/30 transition-all flex items-center gap-1.5"
+                  disabled={savingDecision}
+                  className="px-4 py-2 text-xs font-semibold rounded-xl bg-red-600/20 hover:bg-red-600/30 text-red-300 border border-red-500/30 transition-all flex items-center gap-1.5 disabled:cursor-wait disabled:opacity-50"
                 >
                   <XCircle className="w-4 h-4" />
-                  <span>Reject / Request Redraft</span>
+                  <span>{savingDecision ? 'Saving…' : 'Reject / Request Redraft'}</span>
                 </button>
                 <button
                   onClick={handleApprove}
-                  className="px-5 py-2 text-xs font-bold rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-950/40 transition-all flex items-center gap-2"
+                  disabled={savingDecision}
+                  className="px-5 py-2 text-xs font-bold rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-950/40 transition-all flex items-center gap-2 disabled:cursor-wait disabled:opacity-50"
                 >
                   <Check className="w-4 h-4" />
-                  <span>Approve &amp; Re-Validate Asset</span>
+                  <span>{savingDecision ? 'Saving…' : 'Approve Decision'}</span>
                 </button>
-              </div>
+              </div>}
             </div>
+            {decisionError && <p role="alert" className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">{decisionError}</p>}
           </div>
         </div>
       )}
