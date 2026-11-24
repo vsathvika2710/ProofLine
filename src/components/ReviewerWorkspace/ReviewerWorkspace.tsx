@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import {
   AlertTriangle,
   Bell,
@@ -23,12 +23,17 @@ import {
   decideEvaluationDemoReview,
   EvaluationDemoAsset,
   EvaluationDemoEvent,
+  EvaluationDemoRequestError,
   EvaluationDemoReviewTask,
+  getEvaluationDemoSessionStatus,
   listEvaluationDemoContent,
   listEvaluationDemoReviewTasks,
+  restartEvaluationDemoSession,
+  subscribeEvaluationDemoSessionStatus,
 } from '../../services/evaluationDemoWorkspace';
 import { decideOfficeReview, listOfficeReviewerWorkspace, OfficeFactVersion } from '../../services/officeWorkspace';
 import { GuestClaimFinding, GuestEvidenceItem } from '../../services/guestVerification';
+import { WorkspaceNotice } from '../WorkspaceNotice';
 
 type ReviewerPage =
   | 'overview'
@@ -120,6 +125,11 @@ export const ReviewerWorkspace: React.FC<ReviewerWorkspaceProps> = ({
   canSwitchWorkspace = false,
   availableOfficeRoles = [],
 }) => {
+  const evaluationSessionStatus = useSyncExternalStore(
+    subscribeEvaluationDemoSessionStatus,
+    getEvaluationDemoSessionStatus,
+    getEvaluationDemoSessionStatus,
+  );
   const [page, setPage] = useState<ReviewerPage>('overview');
   const [assets, setAssets] = useState<EvaluationDemoAsset[]>([]);
   const [tasks, setTasks] = useState<EvaluationDemoReviewTask[]>([]);
@@ -134,6 +144,7 @@ export const ReviewerWorkspace: React.FC<ReviewerWorkspaceProps> = ({
   const [reviewNote, setReviewNote] = useState('');
   const [decisionError, setDecisionError] = useState('');
   const [savingDecision, setSavingDecision] = useState(false);
+  const [restartingDemo, setRestartingDemo] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
 
@@ -147,7 +158,9 @@ export const ReviewerWorkspace: React.FC<ReviewerWorkspaceProps> = ({
       setTasks(data.tasks);
       setFactHistory(data.factHistory);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not load the Reviewer workspace.');
+      setError(publicDemo
+        ? cause instanceof EvaluationDemoRequestError ? cause.message : 'Could not load the Reviewer workspace. Try again.'
+        : cause instanceof Error ? cause.message : 'Could not load the Reviewer workspace.');
     } finally {
       setLoading(false);
     }
@@ -164,13 +177,30 @@ export const ReviewerWorkspace: React.FC<ReviewerWorkspaceProps> = ({
         setFactHistory(data.factHistory);
       })
       .catch((cause: unknown) => {
-        if (active) setError(cause instanceof Error ? cause.message : 'Could not load the Reviewer workspace.');
+        if (active) setError(publicDemo
+          ? cause instanceof EvaluationDemoRequestError ? cause.message : 'Could not load the Reviewer workspace. Try again.'
+          : cause instanceof Error ? cause.message : 'Could not load the Reviewer workspace.');
       })
       .finally(() => {
         if (active) setLoading(false);
       });
     return () => { active = false; };
   }, [publicDemo]);
+
+  const restartDemo = async () => {
+    if (restartingDemo) return;
+    setRestartingDemo(true);
+    setError('');
+    try {
+      await restartEvaluationDemoSession();
+      setSelectedTask(null);
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'The demo could not be restarted. Try again.');
+    } finally {
+      setRestartingDemo(false);
+    }
+  };
 
   const assetsById = useMemo(() => new Map(assets.map((asset) => [asset.id, asset])), [assets]);
   const allFindings = useMemo(
@@ -230,7 +260,9 @@ export const ReviewerWorkspace: React.FC<ReviewerWorkspaceProps> = ({
       setSelectedTask(null);
       await refresh();
     } catch (cause) {
-      setDecisionError(cause instanceof Error ? cause.message : 'The review decision could not be saved.');
+      setDecisionError(publicDemo
+        ? cause instanceof EvaluationDemoRequestError ? cause.message : 'The review decision could not be saved. Try again.'
+        : cause instanceof Error ? cause.message : 'The review decision could not be saved.');
     } finally {
       setSavingDecision(false);
     }
@@ -481,8 +513,21 @@ export const ReviewerWorkspace: React.FC<ReviewerWorkspaceProps> = ({
         </header>
         <main className="mx-auto max-w-[1600px] space-y-4 p-4 sm:p-6 lg:p-8">
           <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3.5 py-3 text-xs text-blue-800 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200"><Shield size={15} className="mt-0.5 shrink-0" /><p>{publicDemo ? 'Evaluation Access · fictional NovaWear content and reviewer decisions are persisted in this isolated demo session. AI verification is advisory; the final decision is yours.' : 'Office Workspace · review records and evidence are scoped to your authorized organization. AI verification is advisory; the final decision is yours.'}</p></div>
-          {error && <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-rose-300 bg-rose-50 px-3.5 py-3 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200"><span>{error}</span><button type="button" onClick={() => void refresh()} className="inline-flex items-center gap-1 font-semibold underline"><RefreshCw size={14} /> Retry</button></div>}
-          {loading ? <div className={`${surface} p-8 text-center text-sm text-[var(--pl-muted)]`}><RefreshCw className="mx-auto mb-2 animate-spin" size={18} />Loading reviewer workspace…</div> : content}
+          {publicDemo && evaluationSessionStatus === 'restoring' && <WorkspaceNotice tone="info">Restoring the Evaluation demo session…</WorkspaceNotice>}
+          {publicDemo && evaluationSessionStatus === 'expired' && <WorkspaceNotice
+            tone="warning"
+            action={<button type="button" disabled={restartingDemo} onClick={() => void restartDemo()} className="font-semibold underline disabled:opacity-60">{restartingDemo ? 'Restarting…' : 'Restart Demo'}</button>}
+          >
+            <p>This demo session could not be recovered. Restarting starts a new session; previous demo changes may be lost.</p>
+            {error && <p className="mt-1">{error}</p>}
+          </WorkspaceNotice>}
+          {error && !(publicDemo && evaluationSessionStatus === 'expired') && <WorkspaceNotice
+            tone="warning"
+            action={<button type="button" onClick={() => void refresh()} className="inline-flex items-center gap-1 font-semibold underline"><RefreshCw size={14} /> Retry</button>}
+          >
+            {error}
+          </WorkspaceNotice>}
+          {loading ? <div className={`${surface} p-8 text-center text-sm text-[var(--pl-muted)]`}><RefreshCw className="mx-auto mb-2 animate-spin" size={18} />{publicDemo && evaluationSessionStatus === 'restoring' ? 'Restoring Evaluation demo session…' : 'Loading reviewer workspace…'}</div> : content}
         </main>
       </div>
       {selectedTask && <ReviewInspector
@@ -617,7 +662,7 @@ function ReviewInspector({
             </div>
           </div>
         </> : <p className="text-sm text-[var(--pl-muted)]">This review task is already decided: {statusLabel(task.status)}. Historical decisions cannot be changed here.</p>}
-        {error && <p role="alert" className="mt-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">{error}</p>}
+        {error && <WorkspaceNotice tone="warning" className="mt-3">{error}</WorkspaceNotice>}
       </footer>
     </section>
   </div>;

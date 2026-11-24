@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import { Navbar } from './components/Navbar';
 import { Sidebar, TabType } from './components/Sidebar';
@@ -16,6 +16,7 @@ import { GuestScanner } from './components/Entry/GuestScanner';
 import { EntryLayout } from './components/Entry/EntryLayout';
 import { RoleSelection } from './components/Entry/RoleSelection';
 import { EvaluationRoleSelection } from './components/Entry/EvaluationRoleSelection';
+import { WorkspaceNotice } from './components/WorkspaceNotice';
 import { ThemeProvider } from './theme/ThemeProvider';
 import { SCENARIOS, INITIAL_REVIEW_TASKS, INITIAL_AUDIT_LOGS } from './data/mockData';
 import { Fact, UserRole, ReviewTask, AuditLogEntry, ChangeImpactResult } from './types';
@@ -31,8 +32,12 @@ import { CreatorWorkspace } from './components/CreatorWorkspace/CreatorWorkspace
 import { ReviewerWorkspace } from './components/ReviewerWorkspace/ReviewerWorkspace';
 import {
   decideEvaluationDemoReview,
-  initializeEvaluationDemoSession,
+  EvaluationDemoSessionExpiredError,
+  getEvaluationDemoSessionStatus,
   listEvaluationDemoReviewTasks,
+  restartEvaluationDemoSession,
+  restoreEvaluationDemoSession,
+  subscribeEvaluationDemoSessionStatus,
 } from './services/evaluationDemoWorkspace';
 import {
   changeOfficeFact,
@@ -44,6 +49,11 @@ import {
 export function OfficeDashboard({ publicDemo = false }: { publicDemo?: boolean }) {
   const { role: routeRole } = useParams<{ role: string }>();
   const navigate = useNavigate();
+  const evaluationSessionStatus = useSyncExternalStore(
+    subscribeEvaluationDemoSessionStatus,
+    getEvaluationDemoSessionStatus,
+    getEvaluationDemoSessionStatus,
+  );
   const demoRole = routeRole === 'admin' || routeRole === 'creator' || routeRole === 'reviewer'
     ? routeRole
     : 'admin';
@@ -125,6 +135,7 @@ export function OfficeDashboard({ publicDemo = false }: { publicDemo?: boolean }
     : INITIAL_AUDIT_LOGS.map((entry) => ({ ...entry })),
   );
   const [demoQueueError, setDemoQueueError] = useState('');
+  const [restartingDemo, setRestartingDemo] = useState(false);
   useEffect(() => {
     if (publicDemo) setSelectedTab(demoRole === 'reviewer' ? 'review_center' : 'landing');
   }, [demoRole, publicDemo]);
@@ -142,6 +153,21 @@ export function OfficeDashboard({ publicDemo = false }: { publicDemo?: boolean }
       });
     return () => { active = false; };
   }, [demoRole, publicDemo]);
+
+  const restartDemo = async () => {
+    if (restartingDemo) return;
+    setRestartingDemo(true);
+    setDemoQueueError('');
+    try {
+      await restartEvaluationDemoSession();
+      const { tasks: demoTasks } = await listEvaluationDemoReviewTasks();
+      setTasks(demoTasks);
+    } catch (cause) {
+      setDemoQueueError(cause instanceof Error ? cause.message : 'The demo could not be restarted. Try again.');
+    } finally {
+      setRestartingDemo(false);
+    }
+  };
 
   const refreshOfficeAdmin = async () => {
     const data = await listOfficeAdminWorkspace();
@@ -541,12 +567,27 @@ export function OfficeDashboard({ publicDemo = false }: { publicDemo?: boolean }
 
             {activeTab === 'review_center' && (
               <>
-                {demoQueueError && <div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-rose-300 bg-rose-50 px-3.5 py-3 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200"><span>{demoQueueError}</span><button type="button" onClick={() => {
-                  setDemoQueueError('');
-                  void listEvaluationDemoReviewTasks()
-                    .then(({ tasks: demoTasks }) => setTasks(demoTasks))
-                    .catch((cause: unknown) => setDemoQueueError(cause instanceof Error ? cause.message : 'Could not load the session Reviewer Queue.'));
-                }} className="font-semibold underline">Retry</button></div>}
+                {publicDemo && evaluationSessionStatus === 'restoring' && <WorkspaceNotice tone="info" className="mb-4">Restoring the Evaluation demo session…</WorkspaceNotice>}
+                {publicDemo && evaluationSessionStatus === 'expired' && <WorkspaceNotice
+                  tone="warning"
+                  className="mb-4"
+                  action={<button type="button" disabled={restartingDemo} onClick={() => void restartDemo()} className="font-semibold underline disabled:opacity-60">{restartingDemo ? 'Restarting…' : 'Restart Demo'}</button>}
+                >
+                  This demo session could not be recovered. Restarting starts a new session; previous demo changes may be lost.
+                  {demoQueueError && <p className="mt-1">{demoQueueError}</p>}
+                </WorkspaceNotice>}
+                {demoQueueError && evaluationSessionStatus !== 'expired' && <WorkspaceNotice
+                  tone="warning"
+                  className="mb-4"
+                  action={<button type="button" onClick={() => {
+                    setDemoQueueError('');
+                    void listEvaluationDemoReviewTasks()
+                      .then(({ tasks: demoTasks }) => setTasks(demoTasks))
+                      .catch((cause: unknown) => setDemoQueueError(cause instanceof Error ? cause.message : 'Could not load the Reviewer Queue. Try again.'));
+                  }} className="font-semibold underline">Retry</button>}
+                >
+                  {demoQueueError}
+                </WorkspaceNotice>}
                 <ReviewQueue
                   tasks={tasks}
                   auditLogs={auditLogs}
@@ -658,10 +699,13 @@ function EvaluationWorkspaceRoute() {
   const [error, setError] = useState('');
   const [errorTitle, setErrorTitle] = useState('Could not verify demo availability');
   const [isChecking, setIsChecking] = useState(true);
+  const [needsRestart, setNeedsRestart] = useState(false);
+  const [restarting, setRestarting] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const retry = () => {
     setAllowed(false);
     setError('');
+    setNeedsRestart(false);
     setErrorTitle('Could not verify demo availability');
     setIsChecking(true);
     setAttempt((value) => value + 1);
@@ -681,12 +725,18 @@ function EvaluationWorkspaceRoute() {
           throw new Error('Unknown demonstration workspace.');
         }
         setErrorTitle('Could not open demo workspace');
-        await initializeEvaluationDemoSession();
+        await restoreEvaluationDemoSession();
         if (!active) return;
         setAllowed(true);
       })
       .catch((cause: unknown) => {
-        if (active) setError(cause instanceof Error ? cause.message : 'Could not verify demonstration access. Retry the request.');
+        if (!active) return;
+        if (cause instanceof EvaluationDemoSessionExpiredError) {
+          setNeedsRestart(true);
+          setError('');
+          return;
+        }
+        setError(cause instanceof Error ? cause.message : 'Could not restore the demo workspace. Try again.');
       })
       .finally(() => {
         if (active) setIsChecking(false);
@@ -696,6 +746,45 @@ function EvaluationWorkspaceRoute() {
       controller.abort();
     };
   }, [attempt, navigate, role]);
+
+  const restartDemo = async () => {
+    if (restarting) return;
+    setRestarting(true);
+    setError('');
+    try {
+      await restartEvaluationDemoSession();
+      setNeedsRestart(false);
+      setAllowed(true);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'The demo could not be restarted. Try again.');
+    } finally {
+      setRestarting(false);
+    }
+  };
+
+  if (needsRestart) {
+    return (
+      <EntryLayout>
+        <main className="entry-main flex min-h-screen items-center justify-center px-4">
+          <section className="portal-panel max-w-lg rounded-2xl p-6 text-center sm:p-8">
+            <h1 className="text-xl font-bold text-white">Restart the Evaluation demo?</h1>
+            <WorkspaceNotice tone="warning" className="mt-4 text-left">
+              The previous demo session could not be recovered. Restarting creates a new session, and previous demo changes may be lost.
+            </WorkspaceNotice>
+            {error && <WorkspaceNotice tone="warning" className="mt-3 text-left">{error}</WorkspaceNotice>}
+            <div className="mt-5 flex flex-wrap justify-center gap-3">
+              <button type="button" disabled={restarting} onClick={() => void restartDemo()} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
+                {restarting ? 'Restarting…' : 'Restart Demo'}
+              </button>
+              <button type="button" onClick={() => navigate('/evaluation/workspaces')} className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300">
+                Return to demo workspaces
+              </button>
+            </div>
+          </section>
+        </main>
+      </EntryLayout>
+    );
+  }
 
   if (error) {
     return (
@@ -716,7 +805,7 @@ function EvaluationWorkspaceRoute() {
     );
   }
   if (isChecking || !allowed) {
-    return <EntryLayout><main className="entry-main flex min-h-screen items-center justify-center text-sm text-slate-400">Verifying demonstration workspace…</main></EntryLayout>;
+    return <EntryLayout><main className="entry-main flex min-h-screen items-center justify-center text-sm text-slate-400">Restoring Evaluation demo session…</main></EntryLayout>;
   }
   return <OfficeDashboard publicDemo />;
 }

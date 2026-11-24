@@ -86,10 +86,68 @@ class PublicEvaluationDemoSecurityTests(unittest.TestCase):
         evaluation_demo_workspace_store.clear()
         with patch.object(settings, "enable_evaluation_access", False):
             self.assertEqual(self.request("/api/evaluation/demo/session", "POST")[0], 404)
+            self.assertEqual(self.request("/api/evaluation/demo/session/recover", "POST")[0], 404)
+            self.assertEqual(self.request("/api/evaluation/demo/session/restart", "POST")[0], 404)
             self.assertEqual(self.request("/api/evaluation/demo/creator/content")[0], 404)
 
         with patch.object(settings, "enable_evaluation_access", True):
             self.assertEqual(self.request("/api/evaluation/demo/creator/content")[0], 401)
+
+    def test_demo_session_recovery_is_non_destructive_and_restart_is_explicit(self):
+        evaluation_demo_workspace_store.clear()
+
+        def cookie_header(headers):
+            cookie = SimpleCookie()
+            cookie.load(headers[b"set-cookie"].decode("utf-8"))
+            return f"{cookie['proofline_evaluation_demo'].key}={cookie['proofline_evaluation_demo'].value}".encode("ascii")
+
+        with patch.object(settings, "enable_evaluation_access", True):
+            status, _, created_headers = self.request("/api/evaluation/demo/session", "POST")
+            self.assertEqual(status, 200)
+            self.assertNotIn(b"max-age", created_headers[b"set-cookie"].lower())
+            original_cookie = cookie_header(created_headers)
+            original_token = original_cookie.decode("ascii").split("=", 1)[1]
+            original_session_id = evaluation_demo_workspace_store.get(original_token)["id"]
+
+            status, _, _ = self.request(
+                "/api/evaluation/demo/session/recover",
+                "POST",
+                headers=[(b"cookie", original_cookie)],
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(
+                evaluation_demo_workspace_store.get(original_token)["id"],
+                original_session_id,
+            )
+
+            evaluation_demo_workspace_store.clear()
+            self.assertEqual(
+                self.request(
+                    "/api/evaluation/demo/session/recover",
+                    "POST",
+                    headers=[(b"cookie", original_cookie)],
+                )[0],
+                401,
+            )
+            self.assertEqual(
+                self.request(
+                    "/api/evaluation/demo/session",
+                    "POST",
+                    headers=[(b"cookie", original_cookie)],
+                )[0],
+                401,
+            )
+
+            status, _, restarted_headers = self.request(
+                "/api/evaluation/demo/session/restart",
+                "POST",
+                headers=[(b"cookie", original_cookie)],
+            )
+            self.assertEqual(status, 200)
+            restarted_cookie = cookie_header(restarted_headers)
+            restarted_token = restarted_cookie.decode("ascii").split("=", 1)[1]
+            self.assertNotEqual(restarted_token, original_token)
+            self.assertIsNotNone(evaluation_demo_workspace_store.get(restarted_token))
 
     def test_creator_submissions_are_isolated_between_anonymous_sessions(self):
         evaluation_demo_workspace_store.clear()

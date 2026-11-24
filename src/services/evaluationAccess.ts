@@ -24,9 +24,10 @@ export async function checkEvaluationAccess(signal?: AbortSignal): Promise<boole
     );
 
     if (!response.ok) {
-      throw new Error(
-        `Feature availability request failed (HTTP ${response.status}).`
-      );
+      if (import.meta.env.DEV) {
+        console.warn('[Evaluation access]', { path: '/api/config/features', status: response.status });
+      }
+      throw new Error('Could not verify Evaluation Access availability. Try again shortly.');
     }
 
     let payload: unknown;
@@ -54,13 +55,16 @@ export async function checkEvaluationAccess(signal?: AbortSignal): Promise<boole
 
     if (controller.signal.aborted) {
       throw new Error(
-        'Timed out checking demo availability. Verify the API is running, then retry.'
+        'Timed out checking demo availability. Check your connection, then retry.'
       );
     }
 
     if (error instanceof TypeError) {
+      if (import.meta.env.DEV) {
+        console.warn('[Evaluation access]', { path: '/api/config/features', issue: 'network' });
+      }
       throw new Error(
-        'Could not connect to the Evaluation Access API. Check the API connection, then retry.'
+        'Could not connect to Evaluation Access. Check your connection, then retry.'
       );
     }
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import {
   AlertCircle,
   Bell,
@@ -32,8 +32,12 @@ import {
 import {
   EvaluationDemoAsset,
   EvaluationDemoEvent,
+  EvaluationDemoRequestError,
+  getEvaluationDemoSessionStatus,
   listEvaluationDemoContent,
+  restartEvaluationDemoSession,
   saveEvaluationDemoContent,
+  subscribeEvaluationDemoSessionStatus,
   submitEvaluationDemoContent,
 } from '../../services/evaluationDemoWorkspace';
 import {
@@ -42,6 +46,7 @@ import {
   scanOfficeClaims,
   submitOfficeContentAsset,
 } from '../../services/officeWorkspace';
+import { WorkspaceNotice } from '../WorkspaceNotice';
 
 type CreatorPage =
   | 'overview'
@@ -127,6 +132,11 @@ export const CreatorWorkspace: React.FC<CreatorWorkspaceProps> = ({
   onSwitchWorkspace,
   onLogout,
 }) => {
+  const evaluationSessionStatus = useSyncExternalStore(
+    subscribeEvaluationDemoSessionStatus,
+    getEvaluationDemoSessionStatus,
+    getEvaluationDemoSessionStatus,
+  );
   const [page, setPage] = useState<CreatorPage>('overview');
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -135,6 +145,7 @@ export const CreatorWorkspace: React.FC<CreatorWorkspaceProps> = ({
   const [events, setEvents] = useState<EvaluationDemoEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [restartingDemo, setRestartingDemo] = useState(false);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [currentId, setCurrentId] = useState<string | undefined>();
@@ -171,7 +182,9 @@ export const CreatorWorkspace: React.FC<CreatorWorkspaceProps> = ({
       setAssets(workspace.assets);
       setEvents(workspace.events);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not load the Evaluation Creator workspace.');
+      setError(publicDemo
+        ? cause instanceof EvaluationDemoRequestError ? cause.message : 'Could not load the Evaluation Creator workspace. Try again.'
+        : cause instanceof Error ? cause.message : 'Could not load the Office Creator workspace.');
     } finally {
       setLoading(false);
     }
@@ -180,6 +193,20 @@ export const CreatorWorkspace: React.FC<CreatorWorkspaceProps> = ({
   useEffect(() => {
     void reload();
   }, [publicDemo]);
+
+  const restartDemo = async () => {
+    if (restartingDemo) return;
+    setRestartingDemo(true);
+    setError('');
+    try {
+      await restartEvaluationDemoSession();
+      await reload();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'The demo could not be restarted. Try again.');
+    } finally {
+      setRestartingDemo(false);
+    }
+  };
 
   const changePage = (nextPage: CreatorPage) => {
     setPage(nextPage);
@@ -243,7 +270,9 @@ export const CreatorWorkspace: React.FC<CreatorWorkspaceProps> = ({
       }
       setPage('scanner');
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Claim extraction failed. Check the content and try again.');
+      setError(publicDemo
+        ? 'Claim extraction failed. Check the content and try again.'
+        : cause instanceof Error ? cause.message : 'Claim extraction failed. Check the content and try again.');
     } finally {
       setSaving(false);
     }
@@ -268,7 +297,9 @@ export const CreatorWorkspace: React.FC<CreatorWorkspaceProps> = ({
       setAssessment(result);
       setPage('results');
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Evidence verification failed. Please retry.');
+      setError(publicDemo
+        ? 'Evidence verification failed. Please retry.'
+        : cause instanceof Error ? cause.message : 'Evidence verification failed. Please retry.');
     } finally {
       setSaving(false);
     }
@@ -308,7 +339,9 @@ export const CreatorWorkspace: React.FC<CreatorWorkspaceProps> = ({
       await reload();
       return asset;
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Draft could not be saved.');
+      setError(publicDemo
+        ? cause instanceof EvaluationDemoRequestError ? cause.message : 'Draft could not be saved. Please try again.'
+        : cause instanceof Error ? cause.message : 'Draft could not be saved.');
       return null;
     } finally {
       setSaving(false);
@@ -335,7 +368,9 @@ export const CreatorWorkspace: React.FC<CreatorWorkspaceProps> = ({
       await reload();
       changePage('submissions');
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Submission failed. The Reviewer Queue was not changed.');
+      setError(publicDemo
+        ? cause instanceof EvaluationDemoRequestError ? cause.message : 'Submission failed. The Reviewer Queue was not changed.'
+        : cause instanceof Error ? cause.message : 'Submission failed. The Reviewer Queue was not changed.');
     } finally {
       setSaving(false);
     }
@@ -565,8 +600,21 @@ export const CreatorWorkspace: React.FC<CreatorWorkspaceProps> = ({
           <div className={`flex items-start gap-2 rounded-lg border px-3.5 py-3 text-xs ${publicDemo ? 'border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200' : 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200'}`}>
             <Shield size={15} className="mt-0.5 shrink-0" /><p>{publicDemo ? 'Public demonstration mode · fictional NovaWear data is isolated to this anonymous server session and expires automatically.' : 'Office content, claim scans and review submissions are scoped to your authorized organization.'}</p>
           </div>
-          {error && <div role="alert" className="flex items-start justify-between gap-3 rounded-lg border border-rose-300 bg-rose-50 px-3.5 py-3 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200"><span>{error}</span><button type="button" onClick={() => setError('')} aria-label="Dismiss error"><X size={16} /></button></div>}
-          {loading ? <div className={`${surface} p-8 text-center text-sm text-[var(--pl-muted)]`}><Clock3 className="mx-auto mb-2 animate-pulse" size={20} />Loading workspace…</div> : content}
+          {publicDemo && evaluationSessionStatus === 'restoring' && <WorkspaceNotice tone="info">Restoring the Evaluation demo session…</WorkspaceNotice>}
+          {publicDemo && evaluationSessionStatus === 'expired' && <WorkspaceNotice
+            tone="warning"
+            action={<button type="button" disabled={restartingDemo} onClick={() => void restartDemo()} className="font-semibold underline disabled:opacity-60">{restartingDemo ? 'Restarting…' : 'Restart Demo'}</button>}
+          >
+            <p>This demo session could not be recovered. Restarting starts a new session; previous demo changes may be lost.</p>
+            {error && <p className="mt-1">{error}</p>}
+          </WorkspaceNotice>}
+          {error && !(publicDemo && evaluationSessionStatus === 'expired') && <WorkspaceNotice
+            tone="warning"
+            onDismiss={() => setError('')}
+          >
+            {error}
+          </WorkspaceNotice>}
+          {loading ? <div className={`${surface} p-8 text-center text-sm text-[var(--pl-muted)]`}><Clock3 className="mx-auto mb-2 animate-pulse" size={20} />{publicDemo && evaluationSessionStatus === 'restoring' ? 'Restoring Evaluation demo session…' : 'Loading workspace…'}</div> : content}
         </main>
       </div>
     </div>

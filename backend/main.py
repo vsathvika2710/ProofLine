@@ -237,21 +237,61 @@ def create_evaluation_demo_session(request: Request, response: Response):
     existing_session = evaluation_demo_workspace_store.get(existing_token)
     if existing_token and existing_session is not None:
         return {"active": True, "expiresIn": DEMO_SESSION_TTL_SECONDS}
+    if existing_token:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            "Evaluation demo session expired. Restart the demo to continue.",
+        )
 
     try:
         token, _ = evaluation_demo_workspace_store.create()
     except RuntimeError as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
 
+    _set_evaluation_demo_cookie(response, token)
+    return {"active": True, "expiresIn": DEMO_SESSION_TTL_SECONDS}
+
+
+def _set_evaluation_demo_cookie(response: Response, token: str) -> None:
+    # The server-side idle timeout slides; a fixed cookie age would expire active sessions.
     response.set_cookie(
         key=DEMO_SESSION_COOKIE,
         value=token,
-        max_age=DEMO_SESSION_TTL_SECONDS,
         httponly=True,
         secure=settings.app_env.strip().lower() not in {"development", "dev", "local"},
         samesite="strict",
         path="/api/evaluation/demo",
     )
+
+
+@app.post(
+    "/api/evaluation/demo/session/recover",
+    dependencies=[Depends(enforce_guest_rate_limit)],
+)
+def recover_evaluation_demo_session(request: Request):
+    if not settings.enable_evaluation_access:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Evaluation Access is unavailable")
+    session = evaluation_demo_workspace_store.get(request.cookies.get(DEMO_SESSION_COOKIE))
+    if session is None:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            "Evaluation demo session expired. Restart the demo to continue.",
+        )
+    return {"active": True, "expiresIn": DEMO_SESSION_TTL_SECONDS}
+
+
+@app.post(
+    "/api/evaluation/demo/session/restart",
+    dependencies=[Depends(enforce_guest_rate_limit)],
+)
+def restart_evaluation_demo_session(response: Response):
+    if not settings.enable_evaluation_access:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Evaluation Access is unavailable")
+    try:
+        token, _ = evaluation_demo_workspace_store.create()
+    except RuntimeError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    _set_evaluation_demo_cookie(response, token)
     return {"active": True, "expiresIn": DEMO_SESSION_TTL_SECONDS}
 
 
